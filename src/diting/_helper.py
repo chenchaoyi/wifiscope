@@ -156,6 +156,53 @@ def scan(binary: str, timeout: float = 12.0) -> tuple[list[ScanResult], dict]:
     return _dedup_by_bssid(out), iface_meta
 
 
+# camsnap exit codes mirror the repo-wide helper convention (0 ok, 3 TCC
+# denied, 5 restricted). A one-shot camera grab; None frame + a status the
+# caller can act on (stop the session on a hard denial, retry on transient).
+_CAMSNAP_STATUS_BY_EXIT = {0: "ok", 3: "denied", 4: "not_determined", 5: "restricted"}
+
+
+def camsnap(
+    binary: str,
+    *,
+    width: int | None = None,
+    height: int | None = None,
+    quality: float | None = None,
+    timeout: float = 8.0,
+) -> tuple[dict | None, str]:
+    """Run `<binary> camsnap` and return one JPEG still frame.
+
+    Returns ``(frame, status)`` where ``frame`` is
+    ``{"fmt","w","h","b64"}`` on success (``status == "ok"``) or ``None``
+    otherwise. ``status`` is "denied"/"restricted"/"not_determined" (TCC),
+    or "error" (timeout / bad output / non-mapped non-zero exit) so the
+    session loop can stop on a hard denial but keep going on a transient.
+    """
+    args = [binary, "camsnap"]
+    if width is not None:
+        args += ["--width", str(width)]
+    if height is not None:
+        args += ["--height", str(height)]
+    if quality is not None:
+        args += ["--quality", str(quality)]
+    try:
+        proc = subprocess.run(args, capture_output=True, timeout=timeout, check=False)
+    except (subprocess.TimeoutExpired, OSError):
+        return None, "error"
+    if proc.returncode != 0:
+        return None, _CAMSNAP_STATUS_BY_EXIT.get(proc.returncode, "error")
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None, "error"
+    b64 = payload.get("b64")
+    w = payload.get("w")
+    h = payload.get("h")
+    if not isinstance(b64, str) or not b64 or not isinstance(w, int) or not isinstance(h, int):
+        return None, "error"
+    return {"fmt": "jpeg", "w": w, "h": h, "b64": b64}, "ok"
+
+
 def _dedup_by_bssid(rows: list[ScanResult]) -> list[ScanResult]:
     # CoreWLAN's scanForNetworksWithName_error_ can return multiple
     # instances of the same BSSID per call (each scan dwell on a

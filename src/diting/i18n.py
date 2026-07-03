@@ -1467,8 +1467,26 @@ _ZH: dict[str, str] = {
     "1 device connected": "1 台设备已连接",
     "{n} devices connected": "{n} 台设备已连接",
     "Can't confirm connections": "无法确认连接数",
-    "companion: unknown action {action!r} (use pair / status / unpair)":
-        "companion：未知动作 {action!r}（可用 pair / status / unpair）",
+    "companion: unknown action {action!r} (use pair / status / unpair / camera)":
+        "companion：未知动作 {action!r}（可用 pair / status / unpair / camera）",
+    "remote camera: on": "远程摄像头：开",
+    "remote camera: off": "远程摄像头：关",
+    "Remote camera: on": "远程摄像头：开启",
+    "Remote camera: off": "远程摄像头：关闭",
+    "Not paired. Run `diting companion pair` first.":
+        "尚未配对。请先运行 `diting companion pair`。",
+    "Remote camera disabled.": "已关闭远程摄像头。",
+    "Helper not found — install diting-tianer.app first.":
+        "未找到 helper——请先安装 diting-tianer.app。",
+    "Testing camera access (a permission prompt may appear)…":
+        "正在测试摄像头访问（可能会弹出权限提示）…",
+    "Camera access {status}. Grant it in System Settings → "
+    "Privacy & Security → Camera, then retry.":
+        "摄像头访问{status}。请在「系统设置 → 隐私与安全性 → 摄像头」中授权后重试。",
+    "Remote camera enabled ({w}×{h} test frame captured).":
+        "已开启远程摄像头（已采集 {w}×{h} 测试帧）。",
+    "companion camera: unknown action {action!r} (use on / off / status)":
+        "companion camera：未知动作 {action!r}（可用 on / off / status）",
 
     # ---- analyze CLI ----
     "diting analyse {path}": "diting 分析 {path}",

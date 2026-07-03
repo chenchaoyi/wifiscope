@@ -32,8 +32,10 @@
 // subprocesses inherit the bundle's TCC identity and CoreWLAN /
 // CoreBluetooth return full data.
 
+import AVFoundation
 import Cocoa
 import CoreBluetooth
+import CoreImage
 import CoreLocation
 import CoreWLAN
 import Foundation
@@ -1066,6 +1068,142 @@ func runBLEScan() -> Never {
     // dispatchMain() runs the main run loop forever so CoreBluetooth's
     // delegate callbacks fire.
     dispatchMain()
+}
+
+// ---- camsnap: one-shot camera still (remote-camera session) ------------
+// Grabs the first frame off an AVCaptureVideoDataOutput. AVFoundation's
+// camera TCC behaves like CoreBluetooth's (checks the responsible app's
+// Info.plist), so this takes the same disclaim hop as ble-scan.
+
+private final class CamSnapGrabber: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+    let ready = DispatchSemaphore(value: 0)
+    private let ciContext = CIContext()
+    private(set) var image: CGImage?
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard image == nil,
+            let pixels = CMSampleBufferGetImageBuffer(sampleBuffer)
+        else { return }
+        let ci = CIImage(cvPixelBuffer: pixels)
+        if let cg = ciContext.createCGImage(ci, from: ci.extent) {
+            image = cg
+            ready.signal()
+        }
+    }
+}
+
+private func camSnapDownscale(_ image: CGImage, _ w: Int, _ h: Int) -> CGImage? {
+    guard w > 0, h > 0, image.width != w || image.height != h else { return image }
+    let space = CGColorSpaceCreateDeviceRGB()
+    guard let ctx = CGContext(
+        data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+        space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { return image }
+    ctx.interpolationQuality = .medium
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+    return ctx.makeImage() ?? image
+}
+
+func runCamSnapAndExit(args: [String]) -> Never {
+    if ProcessInfo.processInfo.environment[kDisclaimEnv] == nil {
+        reExecWithDisclaimedResponsibility()
+    }
+    var wantW: Int?
+    var wantH: Int?
+    var quality = 0.6
+    var i = 0
+    while i < args.count {
+        switch args[i] {
+        case "--width": if i + 1 < args.count { wantW = Int(args[i + 1]); i += 1 }
+        case "--height": if i + 1 < args.count { wantH = Int(args[i + 1]); i += 1 }
+        case "--quality":
+            if i + 1 < args.count, let q = Double(args[i + 1]) { quality = q; i += 1 }
+        default: break
+        }
+        i += 1
+    }
+
+    switch AVCaptureDevice.authorizationStatus(for: .video) {
+    case .authorized:
+        break
+    case .restricted:
+        emitBLEErrorAndExit("camera restricted", code: 5)
+    case .denied:
+        emitBLEErrorAndExit("camera denied", code: 3)
+    case .notDetermined:
+        // Foreground first run (via `companion camera on`) can surface the
+        // prompt; a headless daemon can't, so it just resolves denied.
+        let sema = DispatchSemaphore(value: 0)
+        var granted = false
+        AVCaptureDevice.requestAccess(for: .video) { ok in
+            granted = ok
+            sema.signal()
+        }
+        sema.wait()
+        if !granted { emitBLEErrorAndExit("camera denied", code: 3) }
+    @unknown default:
+        emitBLEErrorAndExit("camera auth unknown", code: 2)
+    }
+
+    guard let device = AVCaptureDevice.default(for: .video),
+        let input = try? AVCaptureDeviceInput(device: device)
+    else {
+        emitBLEErrorAndExit("no camera device", code: 2)
+    }
+    let session = AVCaptureSession()
+    session.sessionPreset = .photo
+    guard session.canAddInput(input) else {
+        emitBLEErrorAndExit("cannot add camera input", code: 2)
+    }
+    session.addInput(input)
+
+    let output = AVCaptureVideoDataOutput()
+    output.videoSettings = [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+    ]
+    let grabber = CamSnapGrabber()
+    output.setSampleBufferDelegate(grabber, queue: DispatchQueue(label: "dev.diting.camsnap"))
+    guard session.canAddOutput(output) else {
+        emitBLEErrorAndExit("cannot add camera output", code: 2)
+    }
+    session.addOutput(output)
+
+    session.startRunning()
+    // The sensor warms up over a few frames; wait bounded for the first.
+    if grabber.ready.wait(timeout: .now() + 5) == .timedOut {
+        session.stopRunning()
+        emitBLEErrorAndExit("camera frame timeout", code: 2)
+    }
+    session.stopRunning()
+
+    guard var cg = grabber.image else {
+        emitBLEErrorAndExit("no frame captured", code: 2)
+    }
+    if let tw = wantW, let th = wantH {
+        cg = camSnapDownscale(cg, tw, th) ?? cg
+    }
+    let rep = NSBitmapImageRep(cgImage: cg)
+    guard let jpeg = rep.representation(
+        using: .jpeg, properties: [.compressionFactor: max(0.1, min(1.0, quality))]
+    ) else {
+        emitBLEErrorAndExit("jpeg encode failed", code: 2)
+    }
+    let payload: [String: Any] = [
+        "schema": 1,
+        "fmt": "jpeg",
+        "w": cg.width,
+        "h": cg.height,
+        "b64": jpeg.base64EncodedString(),
+    ]
+    if let data = try? JSONSerialization.data(withJSONObject: payload) {
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write("\n".data(using: .utf8)!)
+    }
+    exit(0)
 }
 
 /// Lightweight Bluetooth-permission probe used by the Python launcher
@@ -2619,7 +2757,7 @@ let args = CommandLine.arguments
 let knownSubcommands: Set<String> = [
     "scan", "ble-scan", "bluetooth-status", "location-status",
     "bluetooth-authorization", "notification-status", "notify",
-    "associate", "--help", "-h",
+    "associate", "camsnap", "--help", "-h",
 ]
 
 if args.count > 1, knownSubcommands.contains(args[1]) {
@@ -2640,6 +2778,8 @@ if args.count > 1, knownSubcommands.contains(args[1]) {
         runNotifyAndExit(args: Array(args.dropFirst(2)))
     case "associate":
         runAssociateAndExit(args: Array(args.dropFirst(2)))
+    case "camsnap":
+        runCamSnapAndExit(args: Array(args.dropFirst(2)))
     case "--help", "-h":
         print("""
         diting-tianer
@@ -2687,6 +2827,13 @@ if args.count > 1, knownSubcommands.contains(args[1]) {
                             outcome. Exit codes: 0 ok, 5
                             enterprise_unsupported, 6 cancelled, 7
                             auth_failed, 8 ssid_not_found, 64 bad args.
+          camsnap [--width W --height H --quality Q]
+                            Grab one still frame from the default camera and
+                            print {"schema","fmt":"jpeg","w","h","b64"} to
+                            stdout. Requests camera access on first run.
+                            Exit codes: 0 ok, 2 timeout / no device,
+                            3 denied, 5 restricted. Used by the companion
+                            remote-camera session.
         """)
         exit(0)
     default:

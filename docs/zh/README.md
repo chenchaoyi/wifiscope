@@ -549,6 +549,7 @@ uv run diting update                     # 自更新到最新发布版
 uv run diting calibrate                  # 5 分钟「房间没人」基线 → ./diting-baseline.json
 uv run diting companion pair             # 配对手机 —— 渲染给 diting-mobile 扫的二维码
 uv run diting companion status           # 查看配对 + 中继队列状态
+uv run diting companion camera on        # 开启远程摄像头（会弹授权，默认关闭）
 uv run diting capabilities --json        # 机器可读的 CLI 清单
 ```
 

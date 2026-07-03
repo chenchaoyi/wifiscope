@@ -42,6 +42,10 @@ class PairingState:
     fingerprint: str | None = None
     created: str | None = None
     last_seq: int = 0
+    # Remote-camera capability, off by default. Enabled only via
+    # `diting companion camera on` (which first proves the TCC grant in the
+    # foreground). The daemon spawns the camera command loop only when true.
+    camera_enabled: bool = False
 
     # ---------- construction ----------
 
@@ -88,6 +92,7 @@ class PairingState:
             "fingerprint": self.fingerprint,
             "created": self.created,
             "last_seq": self.last_seq,
+            "camera_enabled": self.camera_enabled,
         }
 
     def save(self, path: Path | None = None) -> Path:
@@ -123,6 +128,7 @@ def load_state(path: Path | None = None) -> PairingState | None:
         fingerprint=data.get("fingerprint"),
         created=data.get("created"),
         last_seq=int(data.get("last_seq", 0)),
+        camera_enabled=bool(data.get("camera_enabled", False)),
     )
 
 

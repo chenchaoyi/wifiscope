@@ -623,6 +623,7 @@ uv run diting update                     # self-update to the latest release
 uv run diting calibrate                  # 5 min "empty room" RSSI baseline → ./diting-baseline.json
 uv run diting companion pair             # pair a phone — renders a QR for diting-mobile
 uv run diting companion status           # show pairing + relay queue state
+uv run diting companion camera on        # opt in to remote camera (prompts for grant, off by default)
 uv run diting capabilities --json        # machine-readable CLI manifest
 ```
 

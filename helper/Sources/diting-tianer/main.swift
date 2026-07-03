@@ -1222,6 +1222,136 @@ func runCamSnapAndExit(args: [String]) -> Never {
     exit(0)
 }
 
+// ---- camstream: continuous stills (smooth remote-camera preview) --------
+// Opens the camera ONCE, warms up ONCE, then emits throttled JPEG frames as
+// JSON Lines until the parent closes the pipe / SIGTERM — avoiding the
+// per-frame cold-start + warm-up of camsnap so the preview is smooth.
+
+private let kCamStreamInterval: TimeInterval = 0.25  // ~4 fps default
+
+private final class CamStreamer: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+    private let ciContext = CIContext()
+    private let warmup: TimeInterval
+    private let interval: TimeInterval
+    private let quality: Double
+    private let wantW: Int?
+    private let wantH: Int?
+    private var firstFrameAt: Date?
+    private var lastEmit: Date?
+
+    init(warmup: TimeInterval, interval: TimeInterval, quality: Double, wantW: Int?, wantH: Int?) {
+        self.warmup = warmup
+        self.interval = interval
+        self.quality = quality
+        self.wantW = wantW
+        self.wantH = wantH
+    }
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let now = Date()
+        if firstFrameAt == nil { firstFrameAt = now }
+        if now.timeIntervalSince(firstFrameAt!) < warmup { return }  // warm up once
+        if let last = lastEmit, now.timeIntervalSince(last) < interval { return }  // throttle
+        let ci = CIImage(cvPixelBuffer: pixels)
+        guard var cg = ciContext.createCGImage(ci, from: ci.extent) else { return }
+        if let tw = wantW, let th = wantH { cg = camSnapDownscale(cg, tw, th) ?? cg }
+        let rep = NSBitmapImageRep(cgImage: cg)
+        guard let jpeg = rep.representation(
+            using: .jpeg, properties: [.compressionFactor: max(0.1, min(1.0, quality))]
+        ) else { return }
+        let payload: [String: Any] = [
+            "schema": 1, "fmt": "jpeg", "w": cg.width, "h": cg.height,
+            "b64": jpeg.base64EncodedString(),
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: payload) {
+            FileHandle.standardOutput.write(data)
+            FileHandle.standardOutput.write("\n".data(using: .utf8)!)
+        }
+        lastEmit = now
+    }
+}
+
+func runCamStreamAndExit(args: [String]) -> Never {
+    if ProcessInfo.processInfo.environment[kDisclaimEnv] == nil {
+        reExecWithDisclaimedResponsibility()
+    }
+    var wantW: Int?
+    var wantH: Int?
+    var quality = 0.5
+    var interval = kCamStreamInterval
+    var i = 0
+    while i < args.count {
+        switch args[i] {
+        case "--width": if i + 1 < args.count { wantW = Int(args[i + 1]); i += 1 }
+        case "--height": if i + 1 < args.count { wantH = Int(args[i + 1]); i += 1 }
+        case "--quality":
+            if i + 1 < args.count, let q = Double(args[i + 1]) { quality = q; i += 1 }
+        case "--interval":
+            if i + 1 < args.count, let v = Double(args[i + 1]), v > 0 { interval = v; i += 1 }
+        default: break
+        }
+        i += 1
+    }
+
+    switch AVCaptureDevice.authorizationStatus(for: .video) {
+    case .authorized:
+        break
+    case .restricted:
+        emitBLEErrorAndExit("camera restricted", code: 5)
+    case .denied:
+        emitBLEErrorAndExit("camera denied", code: 3)
+    case .notDetermined:
+        let sema = DispatchSemaphore(value: 0)
+        var granted = false
+        AVCaptureDevice.requestAccess(for: .video) { ok in
+            granted = ok
+            sema.signal()
+        }
+        sema.wait()
+        if !granted { emitBLEErrorAndExit("camera denied", code: 3) }
+    @unknown default:
+        emitBLEErrorAndExit("camera auth unknown", code: 2)
+    }
+
+    guard let device = AVCaptureDevice.default(for: .video),
+        let input = try? AVCaptureDeviceInput(device: device)
+    else {
+        emitBLEErrorAndExit("no camera device", code: 2)
+    }
+    let session = AVCaptureSession()
+    // A moderate preset streams far cheaper than full .photo resolution.
+    session.sessionPreset = .high
+    guard session.canAddInput(input) else {
+        emitBLEErrorAndExit("cannot add camera input", code: 2)
+    }
+    session.addInput(input)
+
+    let output = AVCaptureVideoDataOutput()
+    output.videoSettings = [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+    ]
+    output.alwaysDiscardsLateVideoFrames = true
+    let streamer = CamStreamer(
+        warmup: kCamSnapWarmup, interval: interval, quality: quality,
+        wantW: wantW, wantH: wantH
+    )
+    output.setSampleBufferDelegate(streamer, queue: DispatchQueue(label: "dev.diting.camstream"))
+    guard session.canAddOutput(output) else {
+        emitBLEErrorAndExit("cannot add camera output", code: 2)
+    }
+    session.addOutput(output)
+
+    session.startRunning()
+    // Park forever emitting frames; the parent closing the pipe (SIGPIPE) or
+    // SIGTERM ends us — same lifecycle as ble-scan.
+    dispatchMain()
+}
+
 /// Lightweight Bluetooth-permission probe used by the Python launcher
 /// to decide whether to prompt the user before starting the TUI. We
 /// initialise CBCentralManager and wait for the first state change,
@@ -2773,7 +2903,7 @@ let args = CommandLine.arguments
 let knownSubcommands: Set<String> = [
     "scan", "ble-scan", "bluetooth-status", "location-status",
     "bluetooth-authorization", "notification-status", "notify",
-    "associate", "camsnap", "--help", "-h",
+    "associate", "camsnap", "camstream", "--help", "-h",
 ]
 
 if args.count > 1, knownSubcommands.contains(args[1]) {
@@ -2796,6 +2926,8 @@ if args.count > 1, knownSubcommands.contains(args[1]) {
         runAssociateAndExit(args: Array(args.dropFirst(2)))
     case "camsnap":
         runCamSnapAndExit(args: Array(args.dropFirst(2)))
+    case "camstream":
+        runCamStreamAndExit(args: Array(args.dropFirst(2)))
     case "--help", "-h":
         print("""
         diting-tianer
@@ -2850,6 +2982,12 @@ if args.count > 1, knownSubcommands.contains(args[1]) {
                             Exit codes: 0 ok, 2 timeout / no device,
                             3 denied, 5 restricted. Used by the companion
                             remote-camera session.
+          camstream [--interval S --width W --height H --quality Q]
+                            Keep the camera open and stream JSON-Line frames
+                            (one still per line, throttled to --interval,
+                            default ~4 fps) until the parent closes the pipe.
+                            Warms up once, so the preview is smooth. Same
+                            camera-auth exit codes as camsnap.
         """)
         exit(0)
     default:

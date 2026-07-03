@@ -1491,6 +1491,19 @@ _ZH: dict[str, str] = {
         "已开启远程摄像头（已采集 {w}×{h} 测试帧）。",
     "companion camera: unknown action {action!r} (use on / off / status)":
         "companion camera：未知动作 {action!r}（可用 on / off / status）",
+    "diting captures this Mac's camera ONLY when you start a "
+    "session from your paired phone. The capture indicator light "
+    "stays on the whole time; frames are end-to-end encrypted.":
+        "diting 只在你从配对手机发起会话时才采集这台 Mac 的摄像头。"
+        "采集期间指示灯全程亮着；画面端到端加密。",
+    # ---- companion camera: TUI control ----
+    "Camera": "摄像头",
+    "requesting access…": "正在请求权限…",
+    "enabled": "已开启",
+    "disabled": "已关闭",
+    "helper out of date — run make helper": "helper 过旧 —— 请运行 make helper",
+    "helper not found": "未找到 helper",
+    "access {status}": "权限{status}",
 
     # ---- analyze CLI ----
     "diting analyse {path}": "diting 分析 {path}",

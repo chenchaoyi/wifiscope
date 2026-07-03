@@ -1071,14 +1071,26 @@ func runBLEScan() -> Never {
 }
 
 // ---- camsnap: one-shot camera still (remote-camera session) ------------
-// Grabs the first frame off an AVCaptureVideoDataOutput. AVFoundation's
-// camera TCC behaves like CoreBluetooth's (checks the responsible app's
-// Info.plist), so this takes the same disclaim hop as ble-scan.
+// Grabs a frame off an AVCaptureVideoDataOutput. AVFoundation's camera TCC
+// behaves like CoreBluetooth's (checks the responsible app's Info.plist),
+// so this takes the same disclaim hop as ble-scan. It discards the first
+// ~warmup seconds of frames: a freshly-opened session's early frames are
+// dark/underexposed because auto-exposure + white-balance haven't converged
+// yet, and since each camsnap cold-starts the camera EVERY frame would be
+// that dark first frame otherwise.
+
+private let kCamSnapWarmup: TimeInterval = 0.7
 
 private final class CamSnapGrabber: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     let ready = DispatchSemaphore(value: 0)
     private let ciContext = CIContext()
+    private let warmup: TimeInterval
+    private var firstFrameAt: Date?
     private(set) var image: CGImage?
+
+    init(warmup: TimeInterval) {
+        self.warmup = warmup
+    }
 
     func captureOutput(
         _ output: AVCaptureOutput,
@@ -1088,6 +1100,10 @@ private final class CamSnapGrabber: NSObject, AVCaptureVideoDataOutputSampleBuff
         guard image == nil,
             let pixels = CMSampleBufferGetImageBuffer(sampleBuffer)
         else { return }
+        let now = Date()
+        if firstFrameAt == nil { firstFrameAt = now }
+        // Let auto-exposure / white-balance settle before grabbing.
+        if now.timeIntervalSince(firstFrameAt!) < warmup { return }
         let ci = CIImage(cvPixelBuffer: pixels)
         if let cg = ciContext.createCGImage(ci, from: ci.extent) {
             image = cg
@@ -1165,7 +1181,7 @@ func runCamSnapAndExit(args: [String]) -> Never {
     output.videoSettings = [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
     ]
-    let grabber = CamSnapGrabber()
+    let grabber = CamSnapGrabber(warmup: kCamSnapWarmup)
     output.setSampleBufferDelegate(grabber, queue: DispatchQueue(label: "dev.diting.camsnap"))
     guard session.canAddOutput(output) else {
         emitBLEErrorAndExit("cannot add camera output", code: 2)
@@ -1173,8 +1189,8 @@ func runCamSnapAndExit(args: [String]) -> Never {
     session.addOutput(output)
 
     session.startRunning()
-    // The sensor warms up over a few frames; wait bounded for the first.
-    if grabber.ready.wait(timeout: .now() + 5) == .timedOut {
+    // Wait bounded for a settled frame (after the warm-up discard window).
+    if grabber.ready.wait(timeout: .now() + 6) == .timedOut {
         session.stopRunning()
         emitBLEErrorAndExit("camera frame timeout", code: 2)
     }

@@ -42,50 +42,50 @@
 
 ## 3. macOS helper — `camsnap`
 
-- [ ] 3.1 `helper/Sources/diting-tianer/main.swift`: add a `camsnap` role —
-      `AVCaptureSession` + default video device + single JPEG grab; emit
-      `{"schema":1,"fmt":"jpeg","w":…,"h":…,"b64":…}`; TCC-denied → exit 3;
-      optional `--width/--height/--quality`
-- [ ] 3.2 `helper/Info.plist`: add `NSCameraUsageDescription`; note the cdhash
-      change forces a one-time re-grant of existing permissions
-- [ ] 3.3 Extend the install permission sequence to Location → Bluetooth →
-      Notifications → Camera (the `HelperAppDelegate` flow)
-- [ ] 3.4 `make helper` builds clean; `find_helper` resolution unchanged
+- [x] 3.1 `helper/Sources/diting-tianer/main.swift`: added a `camsnap` role —
+      `AVCaptureVideoDataOutput` first-frame grab (disclaim hop like ble-scan),
+      optional downscale, JPEG encode; emits
+      `{"schema":1,"fmt":"jpeg","w":…,"h":…,"b64":…}`; auth-denied → exit 3,
+      restricted → 5, timeout/no-device → 2; `--width/--height/--quality`
+- [x] 3.2 `helper/Info.plist`: added `NSCameraUsageDescription` (cdhash change
+      forces a one-time re-grant of existing Location/Bluetooth permissions)
+- [~] 3.3 Install-sequence Camera step deferred — `camera on` does a foreground
+      test capture that surfaces the prompt, so the install flow need not change
+      for the feature to work; folding Camera into `HelperAppDelegate` is polish
+- [x] 3.4 `swift build -c release` clean (camsnap compiles); `find_helper`
+      resolution unchanged
 
 ## 4. Desktop daemon — command loop, session, camera gate
 
-- [ ] 4.1 `src/diting/companion/relay_client.py`: `poll_commands(since)` (GET
-      command route) and `post_media(frame)` (POST media route), mirroring
-      `fetch_presence`/`_post`
-- [ ] 4.2 `src/diting/companion/runtime.py`: `command_poll_loop(sink)` coroutine
-      (peer of `flush_loop`, `asyncio.to_thread` for blocking urllib) — drains
-      commands, drives the session (per-frame `subprocess.run([helper,"camsnap"])`
-      → seal media → post), refreshes liveness on keepalive, ends on stop or
-      liveness timeout; ignores expired/replayed `cmd_id`
-- [ ] 4.3 `src/diting/capture.py`: spawn `command_poll_loop` in
-      `_spawn_consumers` only when the camera flag is enabled, track it for
-      bounded teardown
-- [ ] 4.4 Camera gate: persist a camera-enabled flag in companion state; the loop
-      is inert when off or unpaired
-- [ ] 4.5 `src/diting/cli.py`: `diting companion camera on|off` — `on` runs a
-      foreground test capture, enables only if the grant is authorized, else
-      reports denial; `off` clears the flag
-- [ ] 4.6 Emit `camera_session` start/stop audit events (metadata only) through
-      the normal sink; add `camera_session` to the event vocabulary (`EVENT_SPEC`)
-      + its golden fixture
+- [x] 4.1 `relay_client.py`: `poll_commands()` (GET `/command`) + `post_media()`
+      (POST `/media`), mirroring `fetch_presence`/`_post`
+- [x] 4.2 `companion/camera.py` `CameraSessionDriver` (pure sync `tick()`) +
+      `runtime.py` `command_poll_loop` (peer of `flush_loop`, `asyncio.to_thread`)
+      — drains commands, per-frame helper `camsnap` → `seal_media` → `post_media`,
+      liveness-timeout auto-stop, replay/stale-`cmd_id` defence; `sink.py`
+      `drain_commands`/`send_frame` keep the key encapsulated
+- [x] 4.3 `capture.py`: spawn `command_poll_loop` in `_spawn_consumers` gated on
+      `sink.camera_enabled`, tracked for bounded teardown
+- [x] 4.4 Camera gate: `PairingState.camera_enabled` (state json, back-compat
+      default False); loop inert when off or unpaired
+- [x] 4.5 `cli.py`: `diting companion camera on|off|status` — `on` runs a
+      foreground test capture, enables only on an authorized grant, else reports
+      the denial and exits non-zero; `off` clears the flag; i18n EN+ZH
+- [ ] 4.6 DEFERRED to a follow-up change: `camera_session` start/stop audit
+      events. Adds a new `EVENT_SPEC` type → regenerates artifacts → forces a
+      mobile re-vendor + events-map rendering, so it ships separately to keep
+      this change's capture path focused. Frames still flow without it.
 
 ## 5. Docs, i18n, tests, gates
 
-- [ ] 5.1 `tests/TESTING.md` (EN + ZH): add the remote-camera test plan BEFORE
-      writing test code (protocol conformance, relay routes, session lifecycle,
-      liveness timeout, opt-in gate, audit event)
-- [ ] 5.2 `i18n.py`: any new user-facing strings (CLI `camera on/off` output,
-      `camera_session` rendering) in EN + ZH parity
-- [ ] 5.3 `README.md` + `docs/zh/README.md`: document the remote-camera opt-in,
-      the grant flow, and the honest limits (LED, battery, no covert capture)
-- [ ] 5.4 Gates: `uv run pytest`, `uv run python scripts/tui_snapshot.py --mode
-      regression`, `openspec validate --specs --strict`, `openspec validate
-      companion-remote-camera --strict`
-- [ ] 5.5 Re-vendor note: the phone side (re-vendor v3 `protocol/`, build the
-      session UI) is a SEPARATE change in `chenchaoyi/diting-mobile`; this change
-      ships the wire contract + desktop half only
+- [x] 5.1 `tests/TESTING.md` + `docs/zh/TESTING.md`: remote-camera test plan
+      (session driver lifecycle, liveness timeout, replay/stale defence, sink
+      command/media plane, relay routes, camsnap exit-code map, CLI gate)
+- [x] 5.2 `i18n.py`: `companion camera` CLI strings in EN + ZH parity
+      (`test_i18n.py` catalog-coverage guard passes)
+- [x] 5.3 `README.md` + `docs/zh/README.md`: `companion camera on` opt-in line
+- [x] 5.4 Gates: `uv run pytest` green, `tui_snapshot --mode regression` pass,
+      `openspec validate --specs --strict` (31) + change `--strict` valid;
+      `swift build -c release` clean for the helper
+- [x] 5.5 Re-vendor note: the phone side shipped separately in
+      `chenchaoyi/diting-mobile` (#64 transport, #65 viewer UI)

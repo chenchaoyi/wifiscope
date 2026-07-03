@@ -1275,9 +1275,11 @@ def _run_companion(argv: list[str]) -> None:
         _companion_status()
     elif action == "unpair":
         _companion_unpair()
+    elif action == "camera":
+        _companion_camera(argv[1:])
     else:
         print(
-            t("companion: unknown action {action!r} (use pair / status / unpair)",
+            t("companion: unknown action {action!r} (use pair / status / unpair / camera)",
               action=action) + "\n",
             file=sys.stderr,
         )
@@ -1324,6 +1326,7 @@ def _companion_status() -> None:
     print(t("Paired — channel {channel}", channel=st.channel))
     print(t("relay:   {url}", url=st.relay_url))
     print(t("last sequence: {n}", n=st.last_seq))
+    print(t("remote camera: on") if st.camera_enabled else t("remote camera: off"))
     print(t("Forwarding runs while `diting` or `diting stream` is active."))
 
 
@@ -1334,6 +1337,60 @@ def _companion_unpair() -> None:
         print(t("Unpaired."))
     else:
         print(t("Not paired; nothing to remove."))
+
+
+def _companion_camera(argv: list[str]) -> None:
+    """`diting companion camera {on|off|status}` — the remote-camera opt-in.
+
+    `on` proves the macOS camera grant in the foreground (a background
+    daemon can't surface the TCC prompt) before enabling; if the grant is
+    denied it stays off and says so."""
+    from . import _helper
+    from .companion import state as cstate
+
+    st = cstate.load_state()
+    if st is None:
+        print(t("Not paired. Run `diting companion pair` first."))
+        return
+    action = argv[0] if argv else "status"
+    if action == "status":
+        print(t("Remote camera: on") if st.camera_enabled else t("Remote camera: off"))
+        return
+    if action == "off":
+        st.camera_enabled = False
+        st.save()
+        print(t("Remote camera disabled."))
+        return
+    if action == "on":
+        binary = _helper.find_helper()
+        if not binary:
+            print(
+                t("Helper not found — install diting-tianer.app first."),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(t("Testing camera access (a permission prompt may appear)…"))
+        frame, status = _helper.camsnap(binary)
+        if status != "ok" or frame is None:
+            print(
+                t("Camera access {status}. Grant it in System Settings → "
+                  "Privacy & Security → Camera, then retry.", status=status),
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        st.camera_enabled = True
+        st.save()
+        print(
+            t("Remote camera enabled ({w}×{h} test frame captured).",
+              w=frame["w"], h=frame["h"])
+        )
+        return
+    print(
+        t("companion camera: unknown action {action!r} (use on / off / status)",
+          action=action) + "\n",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 
 # ---------- capture sessions ----------

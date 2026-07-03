@@ -98,6 +98,7 @@ class CaptureEngine:
         self._companion_sink = None
         self._companion_runtime = None
         self._flush_task: asyncio.Task | None = None
+        self._command_poll_task: asyncio.Task | None = None
         self._tasks: list[asyncio.Task] = []
         self._last_event_at: dict[tuple[str, str], float] = {}
 
@@ -263,6 +264,13 @@ class CaptureEngine:
                 self._companion_runtime.flush_loop(self._companion_sink),
                 name="cap-companion-flush",
             )
+            # Remote-camera command loop — only when the operator has enabled
+            # the camera capability (off by default). Inert otherwise.
+            if self._companion_sink.camera_enabled:
+                self._command_poll_task = asyncio.create_task(
+                    self._companion_runtime.command_poll_loop(self._companion_sink),
+                    name="cap-companion-cmdpoll",
+                )
 
     async def _teardown(self) -> None:
         # Cancel every consumer + the flush task, then best-effort await so
@@ -273,7 +281,9 @@ class CaptureEngine:
             task.cancel()
         if self._flush_task is not None:
             self._flush_task.cancel()
-        for task in [*self._tasks, self._flush_task]:
+        if self._command_poll_task is not None:
+            self._command_poll_task.cancel()
+        for task in [*self._tasks, self._flush_task, self._command_poll_task]:
             if task is None:
                 continue
             try:

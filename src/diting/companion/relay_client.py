@@ -145,6 +145,37 @@ class RelayClient:
             return None
         return obj
 
+    def poll_commands(self) -> list[dict[str, Any]]:
+        """Drain the reverse command queue (phone→desktop). GETs the
+        delete-on-delivery `/command` route and returns the sealed command
+        envelopes, or [] on any failure. Never raises — a transport error
+        or bad body degrades to "no commands this tick"."""
+        headers = {
+            "authorization": f"Bearer {self._token}",
+            "user-agent": USER_AGENT,
+        }
+        raw = self._get_transport(f"{self._url()}/command", headers)
+        if not raw:
+            return []
+        try:
+            obj = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+        envelopes = obj.get("envelopes") if isinstance(obj, dict) else None
+        return [e for e in envelopes if isinstance(e, dict)] if isinstance(envelopes, list) else []
+
+    def post_media(self, envelope: dict[str, Any]) -> int:
+        """POST one sealed media frame to the ephemeral `/media` route.
+        Returns the HTTP status (0 on transport error). No push/category
+        sibling — media never rings the doorbell."""
+        headers = {
+            "authorization": f"Bearer {self._token}",
+            "content-type": "application/json",
+            "user-agent": USER_AGENT,
+        }
+        body = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        return self._transport(f"{self._url()}/media", headers, body)
+
     def _post(self, envelope: dict[str, Any], category: str | None, summary: str | None) -> int:
         headers = {
             "authorization": f"Bearer {self._token}",

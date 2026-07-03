@@ -68,6 +68,9 @@
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>diting scans nearby BLE advertisements so the TUI can show you what devices are around</string>
 
+    <key>NSCameraUsageDescription</key>
+    <string>diting captures a still frame from this Mac's camera only when you start a remote-camera session from your paired phone. The capture indicator light stays on; frames are end-to-end encrypted.</string>
+
     <!-- macOS does not require a usage description for
          UNUserNotificationCenter, but lproj per-locale variants
          in en.lproj / zh-Hans.lproj/InfoPlist.strings give the

@@ -81,6 +81,45 @@ async def flush_loop(sink: "CompanionSink", *, interval: float = FLUSH_INTERVAL_
         raise
 
 
+# The camera loop ticks a little faster than the frame interval so
+# commands (start/keepalive/stop) are seen promptly; the driver spaces
+# actual captures at its own frame interval.
+CAMERA_POLL_INTERVAL_S = 1.0
+
+
+def _default_capture():
+    """Grab one still frame via the helper's `camsnap`, or ``(None, status)``
+    when the helper is missing/denied. Imported lazily so the crypto/helper
+    stack stays off the unpaired path."""
+    from .. import _helper
+
+    binary = _helper.find_helper()
+    if not binary:
+        return None, "error"
+    return _helper.camsnap(binary)
+
+
+async def command_poll_loop(
+    sink: "CompanionSink",
+    *,
+    capture=None,
+    interval: float = CAMERA_POLL_INTERVAL_S,
+) -> None:
+    """Drive the remote-camera session off the event loop. Each tick drains
+    sealed commands, honours the liveness timeout, and captures+forwards a
+    frame when due — all blocking work (GET / subprocess / POST) runs in a
+    worker thread so the capture pipeline never stalls the loop."""
+    from .camera import CameraSessionDriver
+
+    driver = CameraSessionDriver(sink, capture or _default_capture)
+    try:
+        while True:
+            await asyncio.sleep(interval)
+            await asyncio.to_thread(driver.tick)
+    except asyncio.CancelledError:
+        raise
+
+
 def subtitle_chip(sink: "CompanionSink") -> str:
     """Short companion status for the TUI header subtitle."""
     c = sink.client

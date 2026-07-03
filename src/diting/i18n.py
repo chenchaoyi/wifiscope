@@ -1483,6 +1483,10 @@ _ZH: dict[str, str] = {
     "Camera access {status}. Grant it in System Settings → "
     "Privacy & Security → Camera, then retry.":
         "摄像头访问{status}。请在「系统设置 → 隐私与安全性 → 摄像头」中授权后重试。",
+    "The installed helper is out of date (no camera support). "
+    "Rebuild it with `make helper` (or reinstall diting), then retry.":
+        "已安装的 helper 版本过旧（不支持摄像头）。请用 `make helper` 重建"
+        "（或重装 diting）后重试。",
     "Remote camera enabled ({w}×{h} test frame captured).":
         "已开启远程摄像头（已采集 {w}×{h} 测试帧）。",
     "companion camera: unknown action {action!r} (use on / off / status)":

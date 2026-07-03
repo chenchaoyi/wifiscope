@@ -11,6 +11,33 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [2.1.4] — 2026-07-03
+
+Patch release. **Remote camera — smoother preview and easier to turn on.**
+
+### Changed
+
+- **The remote-camera preview now streams instead of grabbing one frame at a
+  time.** The camera opens once and stays open for the session (warming up
+  once), so the phone sees a smooth ~4 fps preview instead of ~1 fps of
+  cold-started frames. Earlier frames were also dark/underexposed because each
+  grab caught the sensor before auto-exposure settled — the stream warms up
+  first, so the picture is properly exposed.
+- **Enable the camera from the TUI.** The companion screen (`k`) gains a `c`
+  toggle that turns the remote camera on/off. Turning it on surfaces the macOS
+  camera prompt in the foreground and takes effect live — no restart, and no
+  more "enable on the command line, then restart" ordering step.
+- `diting companion camera on` now prints a plain rationale before the system
+  prompt (what it captures, the indicator light stays on, frames are
+  end-to-end encrypted) so you grant with full context.
+
+### Fixed
+
+- An out-of-date helper (no camera support) now says "rebuild with `make
+  helper`" instead of a misleading "grant camera access" error.
+- Camera frames no longer consume the event sequence, which could make the
+  phone's event timeline show a false gap.
+
 ## [2.1.3] — 2026-07-03
 
 Feature release. **Remote camera — view this Mac's camera from your paired phone.**

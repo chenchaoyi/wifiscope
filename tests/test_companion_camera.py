@@ -421,6 +421,59 @@ def test_cli_camera_on_reports_unsupported_helper(monkeypatch, tmp_path, capsys)
     assert "make helper" in capsys.readouterr().err.lower()
 
 
+def test_enable_camera_flips_the_flag_on_an_ok_grant(monkeypatch, tmp_path):
+    from diting.companion import runtime as cruntime
+    from diting.companion import state as cstate
+
+    path = tmp_path / "companion.json"
+    cstate.PairingState.generate("https://r.example").save(path)
+    monkeypatch.setattr(_helper, "find_helper", lambda: "bin")
+    monkeypatch.setattr(_helper, "camsnap", lambda binary, **k: ({"fmt": "jpeg", "w": 4, "h": 3, "b64": "Zm9v"}, "ok"))
+    ok, status, frame = cruntime.enable_camera(path)
+    assert ok and status == "ok" and frame["w"] == 4
+    assert load_state(path).camera_enabled is True
+
+
+@pytest.mark.parametrize("setup,expected", [
+    ("denied", "denied"),
+    ("unsupported", "unsupported"),
+    ("no_helper", "no_helper"),
+])
+def test_enable_camera_stays_off_on_failure(monkeypatch, tmp_path, setup, expected):
+    from diting.companion import runtime as cruntime
+    from diting.companion import state as cstate
+
+    path = tmp_path / "companion.json"
+    cstate.PairingState.generate("https://r.example").save(path)
+    if setup == "no_helper":
+        monkeypatch.setattr(_helper, "find_helper", lambda: None)
+    else:
+        monkeypatch.setattr(_helper, "find_helper", lambda: "bin")
+        monkeypatch.setattr(_helper, "camsnap", lambda binary, **k: (None, setup))
+    ok, status, _ = cruntime.enable_camera(path)
+    assert not ok and status == expected
+    assert load_state(path).camera_enabled is False
+
+
+def test_enable_camera_not_paired(tmp_path):
+    from diting.companion import runtime as cruntime
+
+    ok, status, _ = cruntime.enable_camera(tmp_path / "absent.json")
+    assert not ok and status == "not_paired"
+
+
+def test_disable_camera_clears_the_flag(tmp_path):
+    from diting.companion import runtime as cruntime
+    from diting.companion import state as cstate
+
+    path = tmp_path / "companion.json"
+    st = cstate.PairingState.generate("https://r.example")
+    st.camera_enabled = True
+    st.save(path)
+    assert cruntime.disable_camera(path) is True
+    assert load_state(path).camera_enabled is False
+
+
 def test_cli_camera_off_disables(monkeypatch, tmp_path):
     cli = _cli(monkeypatch, tmp_path)
     from diting.companion import state as cstate

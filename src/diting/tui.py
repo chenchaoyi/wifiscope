@@ -6797,6 +6797,7 @@ class CompanionScreen(ModalScreen):
         Binding("escape,k,q", "app.pop_screen", t("Close")),
         Binding("r", "repair", t("Re-pair")),
         Binding("u", "unpair", t("Unpair")),
+        Binding("c", "toggle_camera", t("Camera")),
     ]
 
     DEFAULT_CSS = """
@@ -6831,6 +6832,8 @@ class CompanionScreen(ModalScreen):
         self._presence: dict[str, Any] | None = None
         self._presence_errored = False
         self._presence_timer = None
+        self._camera_busy = False
+        self._camera_status = ""  # transient result line after a toggle
 
     def compose(self) -> ComposeResult:
         body, footer = self._content()
@@ -6926,8 +6929,18 @@ class CompanionScreen(ModalScreen):
         )
         body.append(cstate.render_qr(st.qr_uri()))
 
+        # Remote-camera opt-in line: state + any transient toggle result.
+        body.append("\n\n")
+        body.append(
+            t("Remote camera: on") if st.camera_enabled
+            else t("Remote camera: off"),
+            style="dim",
+        )
+        if self._camera_status:
+            body.append("  ·  " + self._camera_status, style="dim italic")
+
         footer = Text()
-        footer.append(t("r re-pair · u unpair · esc close"), style="dim")
+        footer.append(t("c camera · r re-pair · u unpair · esc close"), style="dim")
         return body, footer
 
     def action_repair(self) -> None:
@@ -6952,6 +6965,41 @@ class CompanionScreen(ModalScreen):
         cstate.clear_state()
         self.app._reload_companion()  # type: ignore[attr-defined]
         self.app.pop_screen()
+
+    async def action_toggle_camera(self) -> None:
+        """Enable / disable the remote camera from inside the TUI. Enabling
+        runs the helper grant in the foreground (the macOS prompt shows over
+        the terminal), off the event loop; on success the companion driver is
+        rebuilt so capture works live without a restart."""
+        if self._camera_busy:
+            return
+        from .companion import runtime as cruntime
+        from .companion import state as cstate
+
+        st = cstate.load_state()
+        if st is None:
+            return  # not paired — nothing to toggle
+        if st.camera_enabled:
+            cruntime.disable_camera()
+            self.app._reload_companion()  # type: ignore[attr-defined]
+            self._camera_status = t("disabled")
+            self._refresh()
+            return
+        self._camera_busy = True
+        self._camera_status = t("requesting access…")
+        self._refresh()
+        ok, status, _frame = await asyncio.to_thread(cruntime.enable_camera)
+        self._camera_busy = False
+        if ok:
+            self.app._reload_companion()  # type: ignore[attr-defined] — live
+            self._camera_status = t("enabled")
+        elif status == "unsupported":
+            self._camera_status = t("helper out of date — run make helper")
+        elif status == "no_helper":
+            self._camera_status = t("helper not found")
+        else:
+            self._camera_status = t("access {status}", status=status)
+        self._refresh()
 
     def _refresh(self) -> None:
         body, footer = self._content()

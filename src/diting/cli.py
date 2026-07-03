@@ -1345,7 +1345,7 @@ def _companion_camera(argv: list[str]) -> None:
     `on` proves the macOS camera grant in the foreground (a background
     daemon can't surface the TCC prompt) before enabling; if the grant is
     denied it stays off and says so."""
-    from . import _helper
+    from .companion import runtime as cruntime
     from .companion import state as cstate
 
     st = cstate.load_state()
@@ -1357,20 +1357,29 @@ def _companion_camera(argv: list[str]) -> None:
         print(t("Remote camera: on") if st.camera_enabled else t("Remote camera: off"))
         return
     if action == "off":
-        st.camera_enabled = False
-        st.save()
+        cruntime.disable_camera()
         print(t("Remote camera disabled."))
         return
     if action == "on":
-        binary = _helper.find_helper()
-        if not binary:
+        # Rationale before the system prompt: say plainly what it's for, so
+        # the user grants with full context (higher trust + grant rate).
+        print(t("diting captures this Mac's camera ONLY when you start a "
+                "session from your paired phone. The capture indicator light "
+                "stays on the whole time; frames are end-to-end encrypted."))
+        print(t("Testing camera access (a permission prompt may appear)…"))
+        ok, status, frame = cruntime.enable_camera()
+        if ok:
+            print(
+                t("Remote camera enabled ({w}×{h} test frame captured).",
+                  w=frame["w"], h=frame["h"])
+            )
+            return
+        if status == "no_helper":
             print(
                 t("Helper not found — install diting-tianer.app first."),
                 file=sys.stderr,
             )
             sys.exit(1)
-        print(t("Testing camera access (a permission prompt may appear)…"))
-        frame, status = _helper.camsnap(binary)
         if status == "unsupported":
             print(
                 t("The installed helper is out of date (no camera support). "
@@ -1379,20 +1388,12 @@ def _companion_camera(argv: list[str]) -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        if status != "ok" or frame is None:
-            print(
-                t("Camera access {status}. Grant it in System Settings → "
-                  "Privacy & Security → Camera, then retry.", status=status),
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        st.camera_enabled = True
-        st.save()
         print(
-            t("Remote camera enabled ({w}×{h} test frame captured).",
-              w=frame["w"], h=frame["h"])
+            t("Camera access {status}. Grant it in System Settings → "
+              "Privacy & Security → Camera, then retry.", status=status),
+            file=sys.stderr,
         )
-        return
+        sys.exit(1)
     print(
         t("companion camera: unknown action {action!r} (use on / off / status)",
           action=action) + "\n",

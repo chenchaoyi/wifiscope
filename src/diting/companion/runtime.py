@@ -114,6 +114,43 @@ def _default_open_stream():
         return None
 
 
+def enable_camera(state_path=None):
+    """Grant + enable the remote camera in the FOREGROUND: run one helper
+    `camsnap`, which surfaces the macOS camera prompt where the user can
+    approve it (a background daemon can't), and only flip the flag on if the
+    grant resolves. Returns ``(ok, status, frame)``; ``status`` is one of
+    ``ok`` / ``not_paired`` / ``no_helper`` / ``unsupported`` / ``denied`` /
+    ``restricted`` / ``not_determined`` / ``error``. Shared by the CLI and
+    the TUI so the grant flow is identical from either surface."""
+    from .. import _helper
+    from .state import load_state
+
+    st = load_state(state_path)
+    if st is None:
+        return False, "not_paired", None
+    binary = _helper.find_helper()
+    if not binary:
+        return False, "no_helper", None
+    frame, status = _helper.camsnap(binary)
+    if status != "ok" or frame is None:
+        return False, status, None
+    st.camera_enabled = True
+    st.save(state_path)
+    return True, "ok", frame
+
+
+def disable_camera(state_path=None) -> bool:
+    """Turn the remote camera capability off. Returns False if not paired."""
+    from .state import load_state
+
+    st = load_state(state_path)
+    if st is None:
+        return False
+    st.camera_enabled = False
+    st.save(state_path)
+    return True
+
+
 def make_camera_driver(sink: "CompanionSink", *, open_stream=None):
     """Build a remote-camera session driver for ``sink``, or None when the
     camera capability is off. Used by the interactive TUI, which ticks the

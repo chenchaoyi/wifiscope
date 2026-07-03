@@ -134,12 +134,13 @@ def test_replayed_and_stale_commands_are_ignored():
     assert sink.frames[-1]["seq"] >= frames_after_start
 
 
-def test_capture_denied_stops_the_session():
+@pytest.mark.parametrize("status", ["denied", "restricted", "unsupported"])
+def test_hard_capture_failure_stops_the_session(status):
     clock = _Clock(datetime(2026, 5, 20, 12, 0, 0, tzinfo=_TZ))
     sink = _FakeSink([[_cmd("camera.start", "s1", exp_at=clock.now + timedelta(seconds=60))]])
-    d = _driver(sink, clock=clock, capture=lambda: (None, "denied"))
+    d = _driver(sink, clock=clock, capture=lambda: (None, status))
     d.tick()
-    assert not d.active
+    assert not d.active  # a hard failure (TCC or out-of-date helper) stops it
     assert sink.frames == []
 
 
@@ -290,7 +291,7 @@ def test_camsnap_ok(monkeypatch):
     assert frame == {"fmt": "jpeg", "w": 4, "h": 3, "b64": "Zm9v"}
 
 
-@pytest.mark.parametrize("code,expected", [(3, "denied"), (5, "restricted"), (4, "not_determined"), (2, "error")])
+@pytest.mark.parametrize("code,expected", [(3, "denied"), (5, "restricted"), (4, "not_determined"), (64, "unsupported"), (2, "error")])
 def test_camsnap_maps_exit_codes(monkeypatch, code, expected):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _fake_proc(code))
     frame, status = _helper.camsnap("bin")

@@ -157,9 +157,17 @@ def scan(binary: str, timeout: float = 12.0) -> tuple[list[ScanResult], dict]:
 
 
 # camsnap exit codes mirror the repo-wide helper convention (0 ok, 3 TCC
-# denied, 5 restricted). A one-shot camera grab; None frame + a status the
-# caller can act on (stop the session on a hard denial, retry on transient).
-_CAMSNAP_STATUS_BY_EXIT = {0: "ok", 3: "denied", 4: "not_determined", 5: "restricted"}
+# denied, 5 restricted). Exit 64 is the helper's "unknown subcommand" — an
+# OLD bundle without the camsnap role — which we surface distinctly so the
+# fix ("rebuild the helper") is obvious rather than looking like a TCC error.
+# A one-shot camera grab; None frame + a status the caller can act on.
+_CAMSNAP_STATUS_BY_EXIT = {
+    0: "ok",
+    3: "denied",
+    4: "not_determined",
+    5: "restricted",
+    64: "unsupported",
+}
 
 
 def camsnap(
@@ -175,8 +183,9 @@ def camsnap(
     Returns ``(frame, status)`` where ``frame`` is
     ``{"fmt","w","h","b64"}`` on success (``status == "ok"``) or ``None``
     otherwise. ``status`` is "denied"/"restricted"/"not_determined" (TCC),
-    or "error" (timeout / bad output / non-mapped non-zero exit) so the
-    session loop can stop on a hard denial but keep going on a transient.
+    "unsupported" (helper too old — no camsnap role, rebuild it), or "error"
+    (timeout / bad output / other non-zero exit) so the session loop can stop
+    on a hard failure but keep going on a transient.
     """
     args = [binary, "camsnap"]
     if width is not None:

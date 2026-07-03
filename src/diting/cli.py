@@ -1371,6 +1371,14 @@ def _companion_camera(argv: list[str]) -> None:
             sys.exit(1)
         print(t("Testing camera access (a permission prompt may appear)…"))
         frame, status = _helper.camsnap(binary)
+        if status == "unsupported":
+            print(
+                t("The installed helper is out of date (no camera support). "
+                  "Rebuild it with `make helper` (or reinstall diting), then "
+                  "retry."),
+                file=sys.stderr,
+            )
+            sys.exit(1)
         if status != "ok" or frame is None:
             print(
                 t("Camera access {status}. Grant it in System Settings → "

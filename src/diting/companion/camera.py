@@ -139,7 +139,10 @@ class CameraSessionDriver:
 
     def _grab(self, now: datetime) -> None:
         frame, status = self._capture()
-        if status in ("denied", "restricted"):
+        # Hard failures (TCC denied/restricted, or an out-of-date helper with
+        # no camsnap role) can't be retried away — stop the session and say so
+        # loudly rather than spin capturing nothing while the phone waits.
+        if status in ("denied", "restricted", "unsupported"):
             log.warning("remote-camera capture %s — stopping session", status)
             self._stop(f"capture {status}")
             return

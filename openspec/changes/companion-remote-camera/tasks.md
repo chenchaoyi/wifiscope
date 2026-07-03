@@ -25,16 +25,20 @@
 
 ## 2. Relay — reverse command + media routes
 
-- [ ] 2.1 `relay/migrations/0003_command_media.sql`: `commands` and `media`
+- [x] 2.1 `relay/migrations/0003_command_media.sql`: `commands` and `media`
       tables (PK `(channel,seq)`, `expiry`), short TTL, modelled on `envelopes`
-- [ ] 2.2 `relay/src/index.js`: bump `SUPPORTED_VERSIONS` `{1}` → `{1,2,3}` (fixes
+- [x] 2.2 `relay/src/index.js`: bump `SUPPORTED_VERSIONS` `{1}` → `{1,2,3}` (fixes
       the existing v2 lag); add routes `POST/GET /command` and `POST/GET /media`
-      with a low `MAX_MEDIA_PULL`, short TTL, and delete-on-delivery (SELECT→
-      DELETE / DELETE…RETURNING); reuse `authorizeExisting`/`validateEnvelope`
-- [ ] 2.3 `relay/test/relay.test.js`: command enqueue→drain, media
-      push→pull-then-delete, media cap, TTL expiry, and a regression test that
-      the relay accepts every version the desktop can emit
-- [ ] 2.4 Apply migration remotely (`npm run migrate:remote`) as part of release
+      via generic `handleQueueStore`/`handleQueueDrain` (table allowlisted),
+      delete-on-delivery, `MAX_MEDIA_PULL=8` / `MAX_COMMAND_PULL=64`, TTL
+      commands 120 s / media 600 s; reuse `authorizeOrBind`/`authorizeExisting`/
+      `validateEnvelope` (relay stays blind); unpair clears both queues
+- [x] 2.3 `relay/test/relay.test.js`: command enqueue→drain (ordered),
+      delete-on-delivery, TTL expiry, unsupported-version reject, auth;
+      media push→pull-then-delete, `MAX_MEDIA_PULL` cap + remainder,
+      expiry; unpair clears queues; v2/v3 accepted regression. 30 tests pass
+- [ ] 2.4 Apply migration remotely (`npm run migrate:remote`) at release — deploy
+      step, not code; run when the Worker is next deployed
 
 ## 3. macOS helper — `camsnap`
 

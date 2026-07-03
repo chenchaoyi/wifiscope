@@ -9,12 +9,28 @@
 import { bearer, timingSafeEqual, tokenHash } from "./auth.js";
 import { buildPushPayload, sendPush } from "./apns.js";
 
-const SUPPORTED_VERSIONS = new Set([1]);
+// Must track the desktop's SUPPORTED_VERSIONS (companion-protocol
+// version.py): {1,2,3}. v2 added the `insight` event, v3 the non-event
+// command/media message classes. A relay that lags this set 400s traffic
+// the desktop legitimately emits, so the two are pinned together by test.
+const SUPPORTED_VERSIONS = new Set([1, 2, 3]);
 const CATEGORIES = new Set(["link", "ble", "lan", "bonjour", "env"]);
 
 // Channel-presence window. ≥ 2× the mobile pull cadence so one missed
 // poll doesn't drop a phone from the connected count.
 const PRESENCE_TTL_SECONDS = 90;
+
+// Remote-camera control/media plane: short-lived, delete-on-delivery
+// queues, deliberately off the 7-day `envelopes` store. A media pull
+// returns at most MAX_MEDIA_PULL frames so one GET can't drag back an
+// unbounded backlog.
+const COMMAND_TTL_SECONDS = 120;
+const MEDIA_TTL_SECONDS = 600;
+const MAX_MEDIA_PULL = 8;
+const MAX_COMMAND_PULL = 64;
+
+// Only these queue tables may be named in a drain/store SQL statement.
+const QUEUE_TABLES = new Set(["commands", "media"]);
 
 const json = (obj, status = 200) =>
   new Response(JSON.stringify(obj), {
@@ -218,9 +234,62 @@ async function handleRegisterApns(env, channelId, request) {
 async function handleUnpair(env, channelId, request) {
   await authorizeExisting(env, channelId, request);
   await env.DB.prepare("DELETE FROM envelopes WHERE channel=?").bind(channelId).run();
+  await env.DB.prepare("DELETE FROM commands WHERE channel=?").bind(channelId).run();
+  await env.DB.prepare("DELETE FROM media WHERE channel=?").bind(channelId).run();
   await env.DB.prepare("DELETE FROM presence WHERE channel=?").bind(channelId).run();
   await env.DB.prepare("DELETE FROM channels WHERE channel=?").bind(channelId).run();
   return json({ ok: true });
+}
+
+// Store one sealed envelope onto a short-lived queue (commands or media).
+// Blind like handleStore — validates envelope shape only, never reads
+// `ct`. POST binds the channel TOFU so either peer can be first to it.
+async function handleQueueStore(env, table, ttl, channelId, request) {
+  if (!QUEUE_TABLES.has(table)) throw new HttpError(404, "not found");
+  let envelope;
+  try {
+    envelope = await request.json();
+  } catch {
+    throw new HttpError(400, "body is not JSON");
+  }
+  validateEnvelope(envelope, channelId);
+  await authorizeOrBind(env, channelId, request);
+  await env.DB.prepare(
+    `INSERT INTO ${table} (channel, seq, ts, body, expiry) VALUES (?, ?, ?, ?, ?) ` +
+      "ON CONFLICT(channel, seq) DO NOTHING",
+  )
+    .bind(channelId, envelope.seq, envelope.ts, JSON.stringify(envelope), nowSec() + ttl)
+    .run();
+  return json({ ok: true, seq: envelope.seq });
+}
+
+// Drain the live head of a queue in sequence order, up to `cap`, and
+// DELETE what is handed out (delete-on-delivery). Rows are therefore
+// served exactly once and a vanished peer leaves no backlog. No cursor:
+// the queue itself IS the cursor.
+async function handleQueueDrain(env, table, cap, channelId, request) {
+  if (!QUEUE_TABLES.has(table)) throw new HttpError(404, "not found");
+  await authorizeExisting(env, channelId, request);
+  const now = nowSec();
+  await env.DB.prepare(`DELETE FROM ${table} WHERE channel=? AND expiry<=?`)
+    .bind(channelId, now)
+    .run();
+  const { results } = await env.DB.prepare(
+    `SELECT seq, body FROM ${table} WHERE channel=? AND expiry>? ORDER BY seq ASC LIMIT ?`,
+  )
+    .bind(channelId, now, cap)
+    .all();
+  const envelopes = results.map((r) => JSON.parse(r.body));
+  if (results.length) {
+    const seqs = results.map((r) => r.seq);
+    const placeholders = seqs.map(() => "?").join(",");
+    await env.DB.prepare(
+      `DELETE FROM ${table} WHERE channel=? AND seq IN (${placeholders})`,
+    )
+      .bind(channelId, ...seqs)
+      .run();
+  }
+  return json({ envelopes });
 }
 
 async function route(request, env, ctx) {
@@ -244,6 +313,27 @@ async function route(request, env, ctx) {
   }
   if (sub === "presence" && request.method === "GET") {
     return handlePresence(env, channelId, request);
+  }
+  // Remote-camera control/media plane. By convention the phone POSTs
+  // commands + GETs media, the desktop GETs commands + POSTs media; the
+  // relay does not (and with one shared token cannot) enforce direction.
+  if (sub === "command") {
+    if (request.method === "POST") {
+      return handleQueueStore(env, "commands", COMMAND_TTL_SECONDS, channelId, request);
+    }
+    if (request.method === "GET") {
+      return handleQueueDrain(env, "commands", MAX_COMMAND_PULL, channelId, request);
+    }
+    throw new HttpError(405, "method not allowed");
+  }
+  if (sub === "media") {
+    if (request.method === "POST") {
+      return handleQueueStore(env, "media", MEDIA_TTL_SECONDS, channelId, request);
+    }
+    if (request.method === "GET") {
+      return handleQueueDrain(env, "media", MAX_MEDIA_PULL, channelId, request);
+    }
+    throw new HttpError(405, "method not allowed");
   }
   throw new HttpError(404, "not found");
 }

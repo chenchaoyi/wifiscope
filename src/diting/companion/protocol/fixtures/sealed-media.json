@@ -1,0 +1,18 @@
+{
+  "key_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "media": {
+    "fmt": "jpeg",
+    "w": 1280,
+    "h": 720,
+    "seq": 1,
+    "b64": "/9j/4GZpeHR1cmUtanBlZ//Z"
+  },
+  "envelope": {
+    "v": 3,
+    "ch": "demo-channel",
+    "seq": 1,
+    "ts": "2026-05-20T12:00:02+08:00",
+    "n": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "ct": "nUwsK9b9JjyWoYwZ/VlG+zEslizsiIURNiQXaAdqnKXGDkXCf9YEbgMhcboO+fMQpmGiL6xZgzrgVNUxU/v9BqfN1N7wvw2LqLqreZ3miWeash25Hm/6kw=="
+  }
+}

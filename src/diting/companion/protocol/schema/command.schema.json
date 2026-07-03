@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://diting.dev/companion-protocol/v3/command.schema.json",
+  "title": "diting companion-protocol camera command (sealed payload)",
+  "description": "A phone->desktop control message driving a remote camera session. Sealed under the channel key; the relay never sees it.",
+  "type": "object",
+  "required": [
+    "cmd",
+    "cmd_id",
+    "exp"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "cmd": {
+      "type": "string",
+      "enum": [
+        "camera.keepalive",
+        "camera.start",
+        "camera.stop"
+      ]
+    },
+    "cmd_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "exp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+    },
+    "args": {
+      "type": "object"
+    }
+  }
+}

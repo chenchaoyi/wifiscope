@@ -19,10 +19,13 @@ from nacl.exceptions import CryptoError
 from nacl.secret import SecretBox
 from nacl.utils import random as nacl_random
 
+from collections.abc import Callable
+
 from .protocol.envelope import build_envelope, validate_envelope
 from .protocol.errors import ProtocolError
 from .protocol.events_schema import validate_event
-from .protocol.version import envelope_version_for
+from .protocol.messages import validate_command, validate_media
+from .protocol.version import MESSAGE_MIN_VERSION, envelope_version_for
 
 KEY_BYTES = SecretBox.KEY_SIZE  # 32
 
@@ -38,22 +41,20 @@ def _unb64(s: str) -> bytes:
         raise ProtocolError(f"envelope field is not valid base64: {exc}") from exc
 
 
-def seal_event(
+def _seal(
     key: bytes,
     *,
+    version: int,
     channel: str,
     seq: int,
     ts: str,
     payload: dict[str, Any],
-    nonce: bytes | None = None,
+    nonce: bytes | None,
 ) -> dict[str, Any]:
-    """Seal one event ``payload`` dict into a wire envelope.
+    """Seal one ``payload`` dict into a wire envelope stamped ``version``.
 
-    ``ts`` is the producer wall-clock for the envelope (distinct from the
-    event's own ``ts`` inside the sealed payload). The plaintext is the
-    compact JSON of ``payload`` with ``ensure_ascii=False`` — byte-for-byte
-    what the JSONL writer emits.
-
+    The plaintext is the compact JSON of ``payload`` with
+    ``ensure_ascii=False`` — byte-for-byte what the JSONL writer emits.
     ``nonce`` defaults to a fresh random one and should stay that way in
     production; it is a seam only so fixtures can be deterministic.
     """
@@ -64,10 +65,7 @@ def seal_event(
     plaintext = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     enc = SecretBox(key).encrypt(plaintext, nonce)
     return build_envelope(
-        # Stamp the minimum version that can decode THIS event, not the
-        # build's latest major: existing types stay v1 so a v1-only consumer
-        # keeps receiving them; only `insight` rides a v2 envelope.
-        version=envelope_version_for(payload.get("type")),
+        version=version,
         channel=channel,
         seq=seq,
         ts=ts,
@@ -76,13 +74,16 @@ def seal_event(
     )
 
 
-def open_envelope(key: bytes, env: dict[str, Any]) -> dict[str, Any]:
-    """Open + validate a wire envelope, returning the event payload.
+def _open(
+    key: bytes,
+    env: dict[str, Any],
+    validate: Callable[[Any], dict[str, Any]],
+) -> dict[str, Any]:
+    """Open + validate a wire envelope, returning the sealed payload.
 
     Raises :class:`ProtocolError` on a malformed envelope, a failed
     authentication (tamper / wrong key), non-JSON plaintext, or a payload
-    that does not conform to the event schema — never surfacing
-    fabricated data.
+    that ``validate`` rejects — never surfacing fabricated data.
     """
     validate_envelope(env)
     nonce = _unb64(env["n"])
@@ -95,4 +96,100 @@ def open_envelope(key: bytes, env: dict[str, Any]) -> dict[str, Any]:
         obj = json.loads(plaintext)
     except ValueError as exc:
         raise ProtocolError(f"decrypted payload is not JSON: {exc}") from exc
-    return validate_event(obj)
+    return validate(obj)
+
+
+def seal_event(
+    key: bytes,
+    *,
+    channel: str,
+    seq: int,
+    ts: str,
+    payload: dict[str, Any],
+    nonce: bytes | None = None,
+) -> dict[str, Any]:
+    """Seal one event ``payload`` dict into a wire envelope.
+
+    ``ts`` is the producer wall-clock for the envelope (distinct from the
+    event's own ``ts`` inside the sealed payload). The envelope is stamped
+    at the minimum version that can decode THIS event, not the build's
+    latest major: existing types stay v1 so a v1-only consumer keeps
+    receiving them; only `insight` rides a v2 envelope.
+    """
+    return _seal(
+        key,
+        version=envelope_version_for(payload.get("type")),
+        channel=channel,
+        seq=seq,
+        ts=ts,
+        payload=payload,
+        nonce=nonce,
+    )
+
+
+def open_envelope(key: bytes, env: dict[str, Any]) -> dict[str, Any]:
+    """Open + validate an event envelope, returning the event payload."""
+    return _open(key, env, validate_event)
+
+
+def seal_command(
+    key: bytes,
+    *,
+    channel: str,
+    seq: int,
+    ts: str,
+    command: dict[str, Any],
+    nonce: bytes | None = None,
+) -> dict[str, Any]:
+    """Seal one camera ``command`` (phone→desktop) into a v3 envelope.
+
+    The command is validated before sealing so a malformed control message
+    never reaches the wire; commands are not events and never touch the
+    event log.
+    """
+    validate_command(command)
+    return _seal(
+        key,
+        version=MESSAGE_MIN_VERSION,
+        channel=channel,
+        seq=seq,
+        ts=ts,
+        payload=command,
+        nonce=nonce,
+    )
+
+
+def open_command(key: bytes, env: dict[str, Any]) -> dict[str, Any]:
+    """Open + validate a camera command envelope, returning the command."""
+    return _open(key, env, validate_command)
+
+
+def seal_media(
+    key: bytes,
+    *,
+    channel: str,
+    seq: int,
+    ts: str,
+    frame: dict[str, Any],
+    nonce: bytes | None = None,
+) -> dict[str, Any]:
+    """Seal one still ``frame`` (desktop→phone) into a v3 envelope.
+
+    The frame is validated before sealing; media never enters the event
+    log or the durable report — it rides the ephemeral media route only.
+    """
+    validate_media(frame)
+    return _seal(
+        key,
+        version=MESSAGE_MIN_VERSION,
+        channel=channel,
+        seq=seq,
+        ts=ts,
+        payload=frame,
+        nonce=nonce,
+    )
+
+
+def open_media(key: bytes, env: dict[str, Any]) -> dict[str, Any]:
+    """Open + validate a media envelope, returning the still frame."""
+    return _open(key, env, validate_media)

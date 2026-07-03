@@ -15,6 +15,7 @@ after capture, since those are environment-derived.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -25,6 +26,7 @@ from typing import Any
 from ..protocol import apns, auth, pairing
 from ..protocol.events_schema import LOCAL_ONLY_FIELDS as _LOCAL_ONLY_FIELDS
 from ..protocol.events_schema import build_json_schema
+from ..protocol.messages import build_command_schema, build_media_schema
 from ..protocol.version import PROTOCOL_VERSION, SUPPORTED_VERSIONS
 from ...event_log import EventLogger
 from ...events import (
@@ -261,6 +263,8 @@ def generate(base_dir: Path) -> dict[str, str]:
         "schema/envelope.schema.json": _dumps(_envelope_schema()),
         "schema/pairing.schema.json": _dumps(_pairing_schema()),
         "schema/apns-trigger.schema.json": _dumps(_apns_trigger_schema()),
+        "schema/command.schema.json": _dumps(build_command_schema()),
+        "schema/media.schema.json": _dumps(build_media_schema()),
         "fixtures/events.jsonl": "\n".join(_emit_event_lines()) + "\n",
     }
 
@@ -295,6 +299,52 @@ def generate(base_dir: Path) -> dict[str, str]:
         "key_b64": pairing.encode_key(sealed_key),
         "event": sealed_event,
         "envelope": sealed_envelope,
+    })
+    # Sealed command + media fixtures: the v3 non-event message classes,
+    # sealed with the same fixed key + fixed nonce so the mobile consumer
+    # can prove its open() interops. Deterministic by construction — NOT how
+    # production sealing works (random nonce).
+    from ..crypto import seal_command, seal_media
+    sealed_command_payload = {
+        "cmd": "camera.start",
+        "cmd_id": "fixture-cmd-0001",
+        "exp": "2026-05-20T12:00:31+08:00",
+        "args": {"interval_s": 1.5, "width": 1280, "height": 720, "quality": 0.6},
+    }
+    sealed_command_envelope = seal_command(
+        sealed_key,
+        channel="demo-channel",
+        seq=1,
+        ts="2026-05-20T12:00:01+08:00",
+        command=sealed_command_payload,
+        nonce=bytes(24),  # fixed nonce — fixture determinism only
+    )
+    files["fixtures/sealed-command.json"] = _dumps({
+        "key_b64": pairing.encode_key(sealed_key),
+        "command": sealed_command_payload,
+        "envelope": sealed_command_envelope,
+    })
+    sealed_media_payload = {
+        "fmt": "jpeg",
+        "w": 1280,
+        "h": 720,
+        "seq": 1,
+        # A tiny stand-in for the JPEG bytes; the fixture proves the seal
+        # shape, not image decoding.
+        "b64": base64.b64encode(b"\xff\xd8\xff\xe0fixture-jpeg\xff\xd9").decode("ascii"),
+    }
+    sealed_media_envelope = seal_media(
+        sealed_key,
+        channel="demo-channel",
+        seq=1,
+        ts="2026-05-20T12:00:02+08:00",
+        frame=sealed_media_payload,
+        nonce=bytes(24),  # fixed nonce — fixture determinism only
+    )
+    files["fixtures/sealed-media.json"] = _dumps({
+        "key_b64": pairing.encode_key(sealed_key),
+        "media": sealed_media_payload,
+        "envelope": sealed_media_envelope,
     })
     files["fixtures/pairing.txt"] = pair_uri + "\n"
     files["fixtures/apns-trigger.json"] = _dumps(

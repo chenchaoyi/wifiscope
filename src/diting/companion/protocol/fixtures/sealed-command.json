@@ -1,0 +1,22 @@
+{
+  "key_b64": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "command": {
+    "cmd": "camera.start",
+    "cmd_id": "fixture-cmd-0001",
+    "exp": "2026-05-20T12:00:31+08:00",
+    "args": {
+      "interval_s": 1.5,
+      "width": 1280,
+      "height": 720,
+      "quality": 0.6
+    }
+  },
+  "envelope": {
+    "v": 3,
+    "ch": "demo-channel",
+    "seq": 1,
+    "ts": "2026-05-20T12:00:01+08:00",
+    "n": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "ct": "4GjXUX5SHWlp6vvJkQ1UmzEskyz8iIURPzUfalcnkKGQVQaEZcoKLwZnFORY6+UQs22reeMayjXhD4U+WeniDu/OwvzSv0r52Ln4Jv6/2Dz17HfCAAfi3onQz+kE9qa9AxKg6+IB2cpwJRAsWnrrNkz0eOYl07Zqumv1LSx1KpV5ioGfogSC8y2xBjtD7yt2ez4q+kIZEnkKOEt2sEI+7+JDiacVOw=="
+  }
+}

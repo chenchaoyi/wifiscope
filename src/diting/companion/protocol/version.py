@@ -9,13 +9,21 @@ unknown (newer) major is refused — abstained on — rather than processed.
 
 from __future__ import annotations
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 # The set of protocol majors this build can decode. A build that
 # understands the v2 vocabulary (the `insight` event) still decodes every
-# v1 envelope, so it lists {1, 2}. A v1-only peer lists {1} and abstains
-# on v2 envelopes.
-SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2})
+# v1 envelope; v3 adds the non-event `command` / `media` message classes
+# (remote camera) on top, so this build lists {1, 2, 3}. A v1-only peer
+# lists {1} and abstains on newer envelopes.
+SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3})
+
+# The `command` / `media` sealed message classes (remote camera) were
+# introduced at v3 and are NOT events. They stamp their envelopes at this
+# minimum-decodable major — the same policy EVENT_MIN_VERSION applies to
+# events — so a v1/v2-only phone abstains on them without being blinded to
+# ordinary event traffic.
+MESSAGE_MIN_VERSION = 3
 
 # Per-event minimum envelope version: the lowest protocol major that can
 # decode an event of this type. Every type defined at v1 is omitted

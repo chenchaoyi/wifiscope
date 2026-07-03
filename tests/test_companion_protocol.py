@@ -15,12 +15,29 @@ from pathlib import Path
 import pytest
 
 from diting.companion import protocol
+from diting.companion.crypto import (
+    open_command,
+    open_envelope,
+    open_media,
+    seal_command,
+    seal_media,
+)
 from diting.companion.protocol import apns, auth, envelope, pairing
 from diting.companion.protocol._generate import generate
 from diting.companion.protocol._schema_spec import EVENT_SPEC
 from diting.companion.protocol.errors import ProtocolError
 from diting.companion.protocol.events_schema import build_json_schema, validate_event
-from diting.companion.protocol.version import PROTOCOL_VERSION, is_supported_version
+from diting.companion.protocol.messages import (
+    build_command_schema,
+    build_media_schema,
+    validate_command,
+    validate_media,
+)
+from diting.companion.protocol.version import (
+    MESSAGE_MIN_VERSION,
+    PROTOCOL_VERSION,
+    is_supported_version,
+)
 
 _BASE = Path(protocol.__file__).resolve().parent
 _FIXTURES = _BASE / "fixtures"
@@ -126,7 +143,8 @@ def test_validate_rejects_non_object():
 def test_supported_version():
     assert is_supported_version(1)
     assert is_supported_version(2)          # v2 added the insight type
-    assert not is_supported_version(3)      # a genuinely-future major
+    assert is_supported_version(3)          # v3 added command/media classes
+    assert not is_supported_version(4)      # a genuinely-future major
     assert not is_supported_version(True)   # bool is not a version
     assert not is_supported_version("1")    # str is not a version
     assert not is_supported_version(None)
@@ -185,7 +203,7 @@ def test_envelope_build_and_validate():
     lambda e: e.pop("ct"),                 # missing field
     lambda e: e.update(seq=0),             # seq < 1
     lambda e: e.update(seq="1"),           # seq not int
-    lambda e: e.update(v=3),               # unsupported (future) version
+    lambda e: e.update(v=4),               # unsupported (future) version
     lambda e: e.update(ch=""),             # empty channel
 ])
 def test_envelope_validate_fails_closed(mutate):
@@ -294,3 +312,134 @@ def test_insight_rejects_bad_severity():
 def test_insight_critical_severity_accepted():
     obj = {"ts": _TS, "type": "insight", "code": "deauth_storm", "severity": "critical"}
     assert validate_event(obj) is obj
+
+
+# ---------- command / media message classes (v3) ----------
+
+_KEY = bytes(range(32))
+_EXP = "2026-05-20T12:00:31+08:00"
+
+
+def _good_command() -> dict:
+    return {"cmd": "camera.start", "cmd_id": "c-1", "exp": _EXP,
+            "args": {"interval_s": 1.5}}
+
+
+def _good_media() -> dict:
+    return {"fmt": "jpeg", "w": 1280, "h": 720, "seq": 1, "b64": "Zm9v"}
+
+
+def test_command_schema_on_disk_matches_builder():
+    on_disk = json.loads((_BASE / "schema/command.schema.json").read_text("utf-8"))
+    assert on_disk == build_command_schema()
+
+
+def test_media_schema_on_disk_matches_builder():
+    on_disk = json.loads((_BASE / "schema/media.schema.json").read_text("utf-8"))
+    assert on_disk == build_media_schema()
+
+
+def test_command_accepts_all_verbs():
+    for verb in ("camera.start", "camera.keepalive", "camera.stop"):
+        obj = {"cmd": verb, "cmd_id": "c-1", "exp": _EXP}
+        assert validate_command(obj) is obj
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda c: c.update(cmd="camera.zoom"),        # unknown verb
+    lambda c: c.update(cmd_id=""),                # empty cmd_id
+    lambda c: c.pop("cmd_id"),                    # missing cmd_id
+    lambda c: c.update(exp="2026-05-20 12:00Z"),  # bad ts format
+    lambda c: c.pop("exp"),                       # missing exp
+    lambda c: c.update(args=["not", "obj"]),      # args not an object
+    lambda c: c.update(surprise=1),               # unknown field
+])
+def test_command_fails_closed(mutate):
+    c = _good_command()
+    mutate(c)
+    with pytest.raises(ProtocolError):
+        validate_command(c)
+
+
+def test_command_rejects_non_object():
+    with pytest.raises(ProtocolError):
+        validate_command(["nope"])
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda m: m.update(fmt="png"),      # unknown format
+    lambda m: m.update(w=0),            # non-positive dimension
+    lambda m: m.update(h=-1),           # negative dimension
+    lambda m: m.update(seq=0),          # seq < 1
+    lambda m: m.update(seq=True),       # bool is not an int
+    lambda m: m.update(b64=""),         # empty payload
+    lambda m: m.pop("b64"),             # missing payload
+    lambda m: m.update(extra=1),        # unknown field
+])
+def test_media_fails_closed(mutate):
+    m = _good_media()
+    mutate(m)
+    with pytest.raises(ProtocolError):
+        validate_media(m)
+
+
+def test_command_seal_open_round_trip():
+    env = seal_command(_KEY, channel="c", seq=1, ts=_TS, command=_good_command())
+    assert is_supported_version(env["v"])
+    assert env["v"] == MESSAGE_MIN_VERSION == 3   # stamped at v3
+    assert open_command(_KEY, env) == _good_command()
+
+
+def test_media_seal_open_round_trip():
+    env = seal_media(_KEY, channel="c", seq=1, ts=_TS, frame=_good_media())
+    assert env["v"] == MESSAGE_MIN_VERSION == 3
+    assert open_media(_KEY, env) == _good_media()
+
+
+def test_seal_rejects_malformed_payload_before_wire():
+    with pytest.raises(ProtocolError):
+        seal_command(_KEY, channel="c", seq=1, ts=_TS,
+                     command={"cmd": "camera.boom", "cmd_id": "x", "exp": _EXP})
+    with pytest.raises(ProtocolError):
+        seal_media(_KEY, channel="c", seq=1, ts=_TS,
+                   frame={"fmt": "gif", "w": 1, "h": 1, "seq": 1, "b64": "AA=="})
+
+
+def test_wrong_key_fails_authentication():
+    env = seal_command(_KEY, channel="c", seq=1, ts=_TS, command=_good_command())
+    with pytest.raises(ProtocolError):
+        open_command(bytes([1]) + bytes(range(1, 32)), env)
+
+
+def test_message_classes_are_not_events_cross_open_fails_closed():
+    # A command envelope opened as an event (or vice-versa) must fail closed,
+    # not surface a mis-typed payload — the classes are disjoint on the wire.
+    cmd_env = seal_command(_KEY, channel="c", seq=1, ts=_TS, command=_good_command())
+    media_env = seal_media(_KEY, channel="c", seq=1, ts=_TS, frame=_good_media())
+    with pytest.raises(ProtocolError):
+        open_envelope(_KEY, cmd_env)     # event validator rejects a command
+    with pytest.raises(ProtocolError):
+        open_command(_KEY, media_env)    # command validator rejects a frame
+    with pytest.raises(ProtocolError):
+        open_media(_KEY, cmd_env)        # media validator rejects a command
+
+
+def test_committed_sealed_command_fixture_opens():
+    fx = json.loads((_FIXTURES / "sealed-command.json").read_text("utf-8"))
+    key = pairing._decode_key(fx["key_b64"])
+    assert open_command(key, fx["envelope"]) == fx["command"]
+    assert fx["envelope"]["v"] == 3
+
+
+def test_committed_sealed_media_fixture_opens():
+    fx = json.loads((_FIXTURES / "sealed-media.json").read_text("utf-8"))
+    key = pairing._decode_key(fx["key_b64"])
+    assert open_media(key, fx["envelope"]) == fx["media"]
+    assert fx["envelope"]["v"] == 3
+
+
+def test_manifest_carries_command_and_media_artifacts():
+    arts = _manifest()["artifacts"]
+    for rel in ("schema/command.schema.json", "schema/media.schema.json",
+                "fixtures/sealed-command.json", "fixtures/sealed-media.json"):
+        assert rel in arts

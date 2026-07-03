@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://diting.dev/companion-protocol/v3/media.schema.json",
+  "title": "diting companion-protocol camera frame (sealed payload)",
+  "description": "One desktop->phone still frame. Sealed under the channel key; travels the ephemeral media route only, never the event log.",
+  "type": "object",
+  "required": [
+    "fmt",
+    "w",
+    "h",
+    "seq",
+    "b64"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "fmt": {
+      "type": "string",
+      "enum": [
+        "jpeg"
+      ]
+    },
+    "w": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "h": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "b64": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

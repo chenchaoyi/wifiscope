@@ -15,7 +15,7 @@
     "version": {
       "type": "integer",
       "enum": [
-        2
+        3
       ]
     },
     "channel": {

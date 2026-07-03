@@ -1,14 +1,18 @@
 {
-  "protocol_version": 2,
+  "protocol_version": 3,
   "generated_by": "diting.companion.protocol._generate",
   "artifacts": {
     "schema/event.schema.json": "80e24912810274962e72026592309721227827225c38fe7042b8a4e1a6a24234",
-    "schema/envelope.schema.json": "9bb8f9f24a8e2416a2d04afeda19f66db470a4ff2f6a9904c4389a4661b1f8ff",
-    "schema/pairing.schema.json": "9dcbcd2aa3cbe0e18f69cef30f93b98f155a921d807713ae5a321fdec13d991e",
+    "schema/envelope.schema.json": "54c1df3cda0051f1a7090602dad71bd9daadcaa36f32cc33dff8a26f64d87666",
+    "schema/pairing.schema.json": "9f27992c49495bd06be1e52433b9f79896f4e065cc74a4a5505abd01a5e3ee2f",
     "schema/apns-trigger.schema.json": "33b064b2c4e9297c06b5e0c9976a81b4439a6c8f6ca1933da9beeb9cd0852160",
+    "schema/command.schema.json": "0c251be2ab5c27b2107422a23d53505a5a0a92590be0f99d48677cae84372878",
+    "schema/media.schema.json": "6385b999c47dde94e2c82c8506427645144da668bbfd05dffc3ea88dd6297d72",
     "fixtures/events.jsonl": "2f6369f3840de3bc426396cb32470402a19e3f50aa899ab18f4123770b59e51f",
     "fixtures/sealed-envelope.json": "424293068c6bb0e5bea54fad08fb2ca8a4c7da964471d86677e0f6627738a694",
-    "fixtures/pairing.txt": "08ee609275f7b8e4df6b4bf3daf04e0df838694bce22fc4087ee8b6140a4fc42",
+    "fixtures/sealed-command.json": "b7a8cfa6682cb3ba5a7e3efc555906388e740f14710e3f9bdd62332a7ae8b384",
+    "fixtures/sealed-media.json": "401a6e17a0876dbf4c019888d5d0edd8b227b5d4905385a81e25e8881463c66a",
+    "fixtures/pairing.txt": "bd49fd45494c1320bf00b98ce9780b46a25d3b1dc65c5d8811c428244b7b7e92",
     "fixtures/apns-trigger.json": "31d9e05d1f3733226a66c0c5238f9fc9905f6b8525e860476071eb69c120b0d0",
     "fixtures/relay-auth.json": "66cc5ea726270d34b40d6cce706d65221f99a107024b9b6ff3cd1c4a6beecf3c"
   }

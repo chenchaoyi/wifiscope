@@ -16,9 +16,13 @@ const SCHEMA = [
   "DROP TABLE IF EXISTS envelopes",
   "DROP TABLE IF EXISTS channels",
   "DROP TABLE IF EXISTS presence",
+  "DROP TABLE IF EXISTS commands",
+  "DROP TABLE IF EXISTS media",
   "CREATE TABLE channels (channel TEXT PRIMARY KEY, token_hash TEXT NOT NULL, apns_token TEXT, apns_sandbox INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL)",
   "CREATE TABLE envelopes (channel TEXT NOT NULL, seq INTEGER NOT NULL, ts TEXT NOT NULL, body TEXT NOT NULL, expiry INTEGER NOT NULL, PRIMARY KEY (channel, seq))",
   "CREATE TABLE presence (channel TEXT NOT NULL, puller TEXT NOT NULL, last_seen INTEGER NOT NULL, PRIMARY KEY (channel, puller))",
+  "CREATE TABLE commands (channel TEXT NOT NULL, seq INTEGER NOT NULL, ts TEXT NOT NULL, body TEXT NOT NULL, expiry INTEGER NOT NULL, PRIMARY KEY (channel, seq))",
+  "CREATE TABLE media (channel TEXT NOT NULL, seq INTEGER NOT NULL, ts TEXT NOT NULL, body TEXT NOT NULL, expiry INTEGER NOT NULL, PRIMARY KEY (channel, seq))",
 ];
 
 beforeEach(async () => {
@@ -133,10 +137,19 @@ describe("auth", () => {
 describe("validation", () => {
   it("rejects an unsupported version", async () => {
     const res = await call("POST", `/v1/channel/${CH}`, {
-      body: { ...envelope(1), v: 2 },
+      body: { ...envelope(1), v: 4 },
       headers: AUTH,
     });
     expect(res.status).toBe(400);
+  });
+
+  it("accepts v2 and v3 (tracks the desktop's supported set)", async () => {
+    expect((await call("POST", `/v1/channel/${CH}`, {
+      body: { ...envelope(1), v: 2 }, headers: AUTH,
+    })).status).toBe(200);
+    expect((await call("POST", `/v1/channel/${CH}`, {
+      body: { ...envelope(2), v: 3 }, headers: AUTH,
+    })).status).toBe(200);
   });
 
   it("rejects a bad seq", async () => {
@@ -242,5 +255,100 @@ describe("channel presence (connected count)", () => {
       .bind(CH)
       .first();
     expect(row.n).toBe(0);
+  });
+});
+
+// Remote-camera control/media plane. Envelopes carry v3; the relay stays
+// blind (never reads `ct`). Queues are delete-on-delivery with short TTLs.
+const cmdEnv = (seq) => ({ v: 3, ch: CH, seq, ts: "2026-05-20T12:00:00+08:00", n: "bg", ct: "Yw" });
+const postCommand = (seq) =>
+  call("POST", `/v1/channel/${CH}/command`, { body: cmdEnv(seq), headers: AUTH });
+const drainCommand = () => call("GET", `/v1/channel/${CH}/command`, { headers: AUTH });
+const postMedia = (seq) =>
+  call("POST", `/v1/channel/${CH}/media`, { body: cmdEnv(seq), headers: AUTH });
+const pullMedia = () => call("GET", `/v1/channel/${CH}/media`, { headers: AUTH });
+
+describe("camera command queue (phone -> desktop)", () => {
+  it("enqueues then drains in sequence order", async () => {
+    expect((await postCommand(1)).status).toBe(200);
+    expect((await postCommand(2)).status).toBe(200);
+    const res = await drainCommand();
+    expect(res.status).toBe(200);
+    const { envelopes } = await res.json();
+    expect(envelopes.map((e) => e.seq)).toEqual([1, 2]);
+  });
+
+  it("is delete-on-delivery: a second drain is empty", async () => {
+    await postCommand(1);
+    await drainCommand();
+    const { envelopes } = await (await drainCommand()).json();
+    expect(envelopes).toEqual([]);
+  });
+
+  it("excludes expired commands", async () => {
+    await postCommand(1);
+    await env.DB.prepare("UPDATE commands SET expiry=? WHERE channel=?")
+      .bind(1, CH)
+      .run();
+    const { envelopes } = await (await drainCommand()).json();
+    expect(envelopes).toEqual([]);
+  });
+
+  it("rejects an unsupported version on the command route", async () => {
+    const res = await call("POST", `/v1/channel/${CH}/command`, {
+      body: { ...cmdEnv(1), v: 4 },
+      headers: AUTH,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("requires the channel token", async () => {
+    await store(1); // bind
+    const res = await call("GET", `/v1/channel/${CH}/command`, {
+      headers: { authorization: "Bearer wrong", "content-type": "application/json" },
+    });
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("camera media queue (desktop -> phone)", () => {
+  it("pushes then pulls-then-deletes frames", async () => {
+    await postMedia(1);
+    await postMedia(2);
+    const first = await (await pullMedia()).json();
+    expect(first.envelopes.map((e) => e.seq)).toEqual([1, 2]);
+    const second = await (await pullMedia()).json();
+    expect(second.envelopes).toEqual([]);
+  });
+
+  it("caps a single pull at MAX_MEDIA_PULL (8)", async () => {
+    for (let seq = 1; seq <= 12; seq++) await postMedia(seq);
+    const { envelopes } = await (await pullMedia()).json();
+    expect(envelopes.length).toBe(8);
+    expect(envelopes.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    // The remaining frames stay queued for the next pull.
+    const rest = await (await pullMedia()).json();
+    expect(rest.envelopes.map((e) => e.seq)).toEqual([9, 10, 11, 12]);
+  });
+
+  it("excludes expired frames", async () => {
+    await postMedia(1);
+    await env.DB.prepare("UPDATE media SET expiry=? WHERE channel=?").bind(1, CH).run();
+    const { envelopes } = await (await pullMedia()).json();
+    expect(envelopes).toEqual([]);
+  });
+});
+
+describe("unpair clears the camera queues", () => {
+  it("drops commands and media on unpair", async () => {
+    await postCommand(1);
+    await postMedia(1);
+    await call("DELETE", `/v1/channel/${CH}`, { headers: AUTH });
+    const cmd = await env.DB.prepare("SELECT COUNT(*) AS n FROM commands WHERE channel=?")
+      .bind(CH).first();
+    const med = await env.DB.prepare("SELECT COUNT(*) AS n FROM media WHERE channel=?")
+      .bind(CH).first();
+    expect(cmd.n).toBe(0);
+    expect(med.n).toBe(0);
   });
 });

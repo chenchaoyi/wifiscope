@@ -11,6 +11,30 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [2.1.3] — 2026-07-03
+
+Feature release. **Remote camera — view this Mac's camera from your paired phone.**
+
+### Added
+
+- **Remote camera (opt-in, off by default).** From the paired diting-mobile app
+  you can start a low-rate snapshot session against this Mac's camera — a way to
+  glance at the surroundings when a network / RF anomaly warrants a look. Enable
+  it with `diting companion camera on`, which surfaces the macOS camera prompt
+  and captures a test frame; `diting companion camera off` disables it. Frames
+  are end-to-end encrypted — the relay only ever sees ciphertext. The hardware
+  capture indicator light stays on the whole time: the capture is never covert.
+  A killed / backgrounded / offline phone auto-stops the session within the
+  liveness timeout, so the camera can't be left running. Works under both
+  `diting` (the TUI) and `diting stream`.
+
+### Changed
+
+- The helper bundle now declares `NSCameraUsageDescription`, which changes its
+  code-signing hash. **After updating, run `diting setup` once to re-grant
+  Location and Bluetooth** — macOS invalidates the previous grants whenever the
+  bundle's signature changes.
+
 ## [2.1.2] — 2026-06-23
 
 Patch release. **Stops the macOS Location prompt from re-popping on every scan.**

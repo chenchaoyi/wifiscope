@@ -2,22 +2,25 @@
 
 Drives a camera session from the phone's sealed commands: drain
 `camera.start` / `camera.keepalive` / `camera.stop`, and while a session is
-open, grab a still frame per interval via the helper and forward it sealed
-over the media plane.
+open, run a live camera *stream* (the helper's `camstream` — camera opens
+once, warms up once) and forward each frame sealed over the media plane.
+Streaming avoids the per-frame cold-start of one-shot `camsnap`, so the phone
+sees a smooth preview.
 
 Fail-safe: a session with no keepalive within the liveness timeout
 auto-stops, so a vanished phone (killed / backgrounded / offline) cannot
 hold the camera open. Replay-safe: each command's `cmd_id` is single-use
 and its `exp` must be in the future.
 
-Pure synchronous logic (`tick()`); the async loop in ``runtime.py`` drives
-it off the event loop via ``asyncio.to_thread``. No timers here, so it is
-unit-testable by calling ``tick()`` directly.
+`tick()` (commands + liveness) is pure and synchronous — the async loop in
+``runtime.py`` drives it off the event loop via ``asyncio.to_thread`` — while
+frame forwarding runs on a daemon pump thread started/stopped by the session.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime
 from typing import Any, Callable, Protocol
 
@@ -26,8 +29,6 @@ log = logging.getLogger(__name__)
 # The desktop stops an unattended session after this long without a
 # keepalive/stop; the phone beats well inside it.
 LIVENESS_TIMEOUT_S = 30.0
-# Minimum spacing between captured frames (~the phone's snapshot cadence).
-FRAME_INTERVAL_S = 1.5
 
 
 class _Sink(Protocol):
@@ -35,10 +36,14 @@ class _Sink(Protocol):
     def send_frame(self, frame: dict[str, Any]) -> int: ...
 
 
-# capture() -> (frame | None, status). status in {ok, denied, restricted,
-# not_determined, error}. A hard denial stops the session; a transient
-# error just skips a frame.
-Capture = Callable[[], "tuple[dict[str, Any] | None, str]"]
+class _Stream(Protocol):
+    def frames(self): ...
+    def close(self) -> None: ...
+
+
+# open_stream() -> a live camera stream, or None when the camera can't be
+# opened (missing/old helper, TCC denied). A None stream ends the session.
+OpenStream = Callable[[], "_Stream | None"]
 
 
 def _parse_exp(exp: object) -> datetime | None:
@@ -57,22 +62,21 @@ class CameraSessionDriver:
     def __init__(
         self,
         sink: _Sink,
-        capture: Capture,
+        open_stream: OpenStream,
         *,
         now: Callable[[], datetime] | None = None,
         liveness_timeout: float = LIVENESS_TIMEOUT_S,
-        frame_interval: float = FRAME_INTERVAL_S,
     ) -> None:
         self._sink = sink
-        self._capture = capture
+        self._open_stream = open_stream
         self._now = now or (lambda: datetime.now().astimezone())
         self._liveness_timeout = liveness_timeout
-        self._frame_interval = frame_interval
         self._active = False
         self._last_seen: datetime | None = None
-        self._last_frame_at: datetime | None = None
         self._seen_ids: set[str] = set()
         self._frame_seq = 0
+        self._stream: _Stream | None = None
+        self._pump: threading.Thread | None = None
 
     @property
     def active(self) -> bool:
@@ -83,8 +87,8 @@ class CameraSessionDriver:
         return self._frame_seq
 
     def tick(self) -> None:
-        """One driver step: apply pending commands, honour the liveness
-        timeout, and capture+forward a frame if one is due."""
+        """One driver step: apply pending commands and honour the liveness
+        timeout. Frame forwarding happens on the pump thread, not here."""
         now = self._now()
         for cmd in self._sink.drain_commands():
             self._handle(cmd, now)
@@ -94,12 +98,6 @@ class CameraSessionDriver:
             and (now - self._last_seen).total_seconds() > self._liveness_timeout
         ):
             self._stop("liveness timeout")
-            return
-        if self._active and (
-            self._last_frame_at is None
-            or (now - self._last_frame_at).total_seconds() >= self._frame_interval
-        ):
-            self._grab(now)
 
     def _handle(self, cmd: dict[str, Any], now: datetime) -> None:
         cmd_id = cmd.get("cmd_id")
@@ -123,31 +121,39 @@ class CameraSessionDriver:
                 self._stop("stop command")
 
     def _start(self, now: datetime) -> None:
+        stream = self._open_stream()
+        if stream is None:
+            log.warning("remote-camera: cannot open the camera stream — session not started")
+            return
         self._active = True
         self._last_seen = now
-        self._last_frame_at = None
         self._frame_seq = 0
+        self._stream = stream
+        self._pump = threading.Thread(
+            target=self._run_pump, args=(stream,), name="camera-pump", daemon=True
+        )
+        self._pump.start()
         log.info("remote-camera session started")
+
+    def _run_pump(self, stream: _Stream) -> None:
+        """Forward streamed frames to the media plane until the session stops
+        (the stream is closed → its frame iterator ends)."""
+        try:
+            for frame in stream.frames():
+                if not self._active:
+                    break
+                self._frame_seq += 1
+                self._sink.send_frame({**frame, "seq": self._frame_seq})
+        except Exception:  # noqa: BLE001 — a pump error must not crash the daemon
+            log.warning("remote-camera pump ended on error", exc_info=True)
 
     def _stop(self, reason: str) -> None:
         self._active = False
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            stream.close()  # ends the pump's frame iterator
         log.info(
             "remote-camera session stopped (%s) after %d frames",
             reason,
             self._frame_seq,
         )
-
-    def _grab(self, now: datetime) -> None:
-        frame, status = self._capture()
-        # Hard failures (TCC denied/restricted, or an out-of-date helper with
-        # no camsnap role) can't be retried away — stop the session and say so
-        # loudly rather than spin capturing nothing while the phone waits.
-        if status in ("denied", "restricted", "unsupported"):
-            log.warning("remote-camera capture %s — stopping session", status)
-            self._stop(f"capture {status}")
-            return
-        if frame is None:
-            return  # transient error — retry next tick
-        self._frame_seq += 1
-        self._sink.send_frame({**frame, "seq": self._frame_seq})
-        self._last_frame_at = now

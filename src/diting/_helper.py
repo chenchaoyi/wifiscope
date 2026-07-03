@@ -212,6 +212,69 @@ def camsnap(
     return {"fmt": "jpeg", "w": w, "h": h, "b64": b64}, "ok"
 
 
+class CamStream:
+    """A live camera stream from the helper's `camstream`: the camera stays
+    open, so frames come smoothly without the per-frame cold-start + warm-up
+    of `camsnap`. Iterate :meth:`frames`; call :meth:`close` to stop."""
+
+    def __init__(self, proc) -> None:
+        self._proc = proc
+
+    def frames(self):
+        """Yield ``{"fmt","w","h","b64"}`` per streamed line until the helper
+        exits or the stream is closed. Malformed lines are skipped."""
+        stdout = self._proc.stdout
+        if stdout is None:
+            return
+        for line in stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            b64, w, h = d.get("b64"), d.get("w"), d.get("h")
+            if isinstance(b64, str) and b64 and isinstance(w, int) and isinstance(h, int):
+                yield {"fmt": "jpeg", "w": w, "h": h, "b64": b64}
+
+    def close(self) -> None:
+        try:
+            self._proc.terminate()
+            self._proc.wait(timeout=2)
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            try:
+                self._proc.kill()
+            except OSError:
+                pass
+
+
+def camstream(
+    binary: str,
+    *,
+    interval: float | None = None,
+    width: int | None = None,
+    height: int | None = None,
+    quality: float | None = None,
+) -> CamStream:
+    """Start the helper's continuous camera stream and return a
+    :class:`CamStream`. The caller pumps :meth:`CamStream.frames` on a thread
+    and calls :meth:`CamStream.close` to stop."""
+    args = [binary, "camstream"]
+    if interval is not None:
+        args += ["--interval", str(interval)]
+    if width is not None:
+        args += ["--width", str(width)]
+    if height is not None:
+        args += ["--height", str(height)]
+    if quality is not None:
+        args += ["--quality", str(quality)]
+    proc = subprocess.Popen(
+        args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1
+    )
+    return CamStream(proc)
+
+
 def _dedup_by_bssid(rows: list[ScanResult]) -> list[ScanResult]:
     # CoreWLAN's scanForNetworksWithName_error_ can return multiple
     # instances of the same BSSID per call (each scan dwell on a

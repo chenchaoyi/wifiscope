@@ -40,6 +40,11 @@ class CompanionSink:
         self._state_path = state_path
         self._monotonic = monotonic
         self._key = state.key_bytes()
+        # Media rides its own in-memory sequence, NOT the persisted event
+        # `last_seq`: media is ephemeral (delete-on-read) so it needs no
+        # durable cursor, and sharing the event cursor would make the phone's
+        # event pull see false gaps whenever a frame consumed a number.
+        self._media_seq = 0
 
     @property
     def client(self) -> RelayClient:
@@ -67,14 +72,13 @@ class CompanionSink:
         return out
 
     def send_frame(self, frame: dict[str, Any]) -> int:
-        """Seal one still frame under the channel key on the shared monotonic
-        seq cursor and POST it to the ephemeral media route. Returns the HTTP
-        status."""
-        seq = self._state.next_seq(self._state_path)
+        """Seal one still frame under the channel key on the media sequence
+        and POST it to the ephemeral media route. Returns the HTTP status."""
+        self._media_seq += 1
         envelope = seal_media(
             self._key,
             channel=self._state.channel,
-            seq=seq,
+            seq=self._media_seq,
             ts=datetime.now().astimezone().isoformat(),
             frame=frame,
         )

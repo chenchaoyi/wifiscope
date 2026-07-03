@@ -81,50 +81,64 @@ async def flush_loop(sink: "CompanionSink", *, interval: float = FLUSH_INTERVAL_
         raise
 
 
-# The camera loop ticks a little faster than the frame interval so
-# commands (start/keepalive/stop) are seen promptly; the driver spaces
-# actual captures at its own frame interval.
+# The command loop ticks ~1 s for commands + liveness; frames stream on
+# their own pump thread, not this tick.
 CAMERA_POLL_INTERVAL_S = 1.0
 
+# Preview stream defaults — a moderate size + ~4 fps keep relay/bandwidth
+# reasonable while the camera-open-once stream stays smooth.
+CAMERA_STREAM_INTERVAL_S = 0.25
+CAMERA_STREAM_WIDTH = 960
+CAMERA_STREAM_HEIGHT = 540
+CAMERA_STREAM_QUALITY = 0.5
 
-def _default_capture():
-    """Grab one still frame via the helper's `camsnap`, or ``(None, status)``
-    when the helper is missing/denied. Imported lazily so the crypto/helper
+
+def _default_open_stream():
+    """Open the helper's live `camstream`, or None when the helper is
+    missing/old or the camera is denied. Imported lazily so the crypto/helper
     stack stays off the unpaired path."""
     from .. import _helper
 
     binary = _helper.find_helper()
     if not binary:
-        return None, "error"
-    return _helper.camsnap(binary)
+        return None
+    try:
+        return _helper.camstream(
+            binary,
+            interval=CAMERA_STREAM_INTERVAL_S,
+            width=CAMERA_STREAM_WIDTH,
+            height=CAMERA_STREAM_HEIGHT,
+            quality=CAMERA_STREAM_QUALITY,
+        )
+    except OSError:
+        return None
 
 
-def make_camera_driver(sink: "CompanionSink", *, capture=None):
+def make_camera_driver(sink: "CompanionSink", *, open_stream=None):
     """Build a remote-camera session driver for ``sink``, or None when the
     camera capability is off. Used by the interactive TUI, which ticks the
     driver on its own timer (the headless daemon uses ``command_poll_loop``
-    instead). Returns a ``CameraSessionDriver`` whose ``tick()`` is safe to
-    run in a worker thread."""
+    instead)."""
     if not sink.camera_enabled:
         return None
     from .camera import CameraSessionDriver
 
-    return CameraSessionDriver(sink, capture or _default_capture)
+    return CameraSessionDriver(sink, open_stream or _default_open_stream)
 
 
 async def command_poll_loop(
     sink: "CompanionSink",
     *,
-    capture=None,
+    open_stream=None,
     interval: float = CAMERA_POLL_INTERVAL_S,
 ) -> None:
     """Drive the remote-camera session off the event loop. Each tick drains
-    sealed commands, honours the liveness timeout, and captures+forwards a
-    frame when due — all blocking work (GET / subprocess / POST) runs in a
-    worker thread so the capture pipeline never stalls the loop."""
+    sealed commands and honours the liveness timeout (run in a worker thread
+    so the blocking GET never stalls the loop); frames are forwarded by the
+    session's own pump thread."""
     from .camera import CameraSessionDriver
 
-    driver = CameraSessionDriver(sink, capture or _default_capture)
+    driver = CameraSessionDriver(sink, open_stream or _default_open_stream)
     try:
         while True:
             await asyncio.sleep(interval)

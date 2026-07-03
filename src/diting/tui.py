@@ -7088,6 +7088,8 @@ class DitingApp(App):
         # nothing (including pynacl) loads on the hot path.
         self._companion_sink = None
         self._companion_flush_timer = None
+        self._camera_driver = None
+        self._camera_timer = None
         try:
             from .companion import runtime as _companion_runtime
             self._companion_sink = _companion_runtime.build_sink()
@@ -7095,6 +7097,9 @@ class DitingApp(App):
             self._companion_sink = None
         if self._companion_sink is not None:
             self._event_logger.set_observer(self._companion_sink.offer)
+            self._camera_driver = _companion_runtime.make_camera_driver(
+                self._companion_sink
+            )
         # Session header — written immediately so any subsequent
         # emit_* lands AFTER the session_meta line. Synchronously
         # fetch the current connection ONCE here (before the
@@ -7353,6 +7358,13 @@ class DitingApp(App):
             self._companion_flush_timer = self.set_interval(
                 3.0, self._companion_flush,
             )
+        # Drive a remote-camera session (only when the operator opted in via
+        # `diting companion camera on`) — drain commands + capture off the UI
+        # thread once a second.
+        if self._camera_driver is not None:
+            self._camera_timer = self.set_interval(
+                1.0, self._companion_camera_tick,
+            )
         # Persist the familiarity baseline periodically so a hard kill
         # (no on_unmount) loses at most one window of accrual.
         if self._familiarity_store is not None:
@@ -7419,6 +7431,15 @@ class DitingApp(App):
             self._companion_flush_timer = self.set_interval(
                 3.0, self._companion_flush,
             )
+        # Rebuild the camera driver from the new pairing (resets any session).
+        from .companion import runtime as _companion_runtime
+        self._camera_driver = (
+            _companion_runtime.make_camera_driver(sink) if sink is not None else None
+        )
+        if self._camera_driver is not None and self._camera_timer is None:
+            self._camera_timer = self.set_interval(
+                1.0, self._companion_camera_tick,
+            )
         self.sub_title = self._build_subtitle()
 
     async def _companion_flush(self) -> None:
@@ -7428,6 +7449,18 @@ class DitingApp(App):
         if sink.client.pending:
             await asyncio.to_thread(sink.flush)
         self.sub_title = self._build_subtitle()
+
+    async def _companion_camera_tick(self) -> None:
+        """One remote-camera driver step (drain commands + capture/forward a
+        frame), run off the UI thread since it does blocking GET / subprocess
+        / POST work."""
+        driver = self._camera_driver
+        if driver is None:
+            return
+        try:
+            await asyncio.to_thread(driver.tick)
+        except Exception:
+            pass  # a transient capture/relay error must never crash the TUI
 
     def on_unmount(self) -> None:
         # Best-effort final drain so a clean quit isn't lossy.

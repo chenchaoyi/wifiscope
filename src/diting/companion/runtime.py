@@ -99,6 +99,19 @@ def _default_capture():
     return _helper.camsnap(binary)
 
 
+def make_camera_driver(sink: "CompanionSink", *, capture=None):
+    """Build a remote-camera session driver for ``sink``, or None when the
+    camera capability is off. Used by the interactive TUI, which ticks the
+    driver on its own timer (the headless daemon uses ``command_poll_loop``
+    instead). Returns a ``CameraSessionDriver`` whose ``tick()`` is safe to
+    run in a worker thread."""
+    if not sink.camera_enabled:
+        return None
+    from .camera import CameraSessionDriver
+
+    return CameraSessionDriver(sink, capture or _default_capture)
+
+
 async def command_poll_loop(
     sink: "CompanionSink",
     *,

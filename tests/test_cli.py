@@ -416,7 +416,7 @@ def test_ensure_helper_ready_consumes_splash_results_into_grant_flow(
 ) -> None:
     """When the splash reports Bluetooth as False, _ensure_helper_ready
     SHALL fall into the existing missing-permission prompt path
-    (the `Permissions required:` instructional prose) after splash
+    (the `Permissions needed` instructional prose) after splash
     teardown — unchanged by the splash refactor."""
     from diting import _helper, splash
 
@@ -444,7 +444,7 @@ def test_ensure_helper_ready_consumes_splash_results_into_grant_flow(
 
     cli._ensure_helper_ready()
     captured = capsys.readouterr()
-    assert "Permissions required:" in captured.out
+    assert "Permissions needed" in captured.out
     assert "Bluetooth (BLE devices view)" in captured.out
 
 

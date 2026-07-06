@@ -11,6 +11,20 @@ behaviours between releases.
 
 ## [Unreleased]
 
+## [2.1.5] — 2026-07-06
+
+Patch release. **Cleaner startup.**
+
+### Changed
+
+- **The startup permission check reads clearly now.** The pre-TUI prompt that
+  requests Location / Bluetooth was cluttered — a full absolute helper path, a
+  stray progress dot, and a status line naming permissions that weren't even
+  pending. It's now a tidy "Permissions needed" block: the missing grants as a
+  short list, a one-line "click Allow · Ctrl+C skips" instruction, and a status
+  that names only the grants still being waited on, ending in a clear
+  "✓ All set".
+
 ## [2.1.4] — 2026-07-03
 
 Patch release. **Remote camera — smoother preview and easier to turn on.**

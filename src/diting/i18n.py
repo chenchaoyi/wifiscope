@@ -675,6 +675,21 @@ _ZH: dict[str, str] = {
         "提示：找到了 helper 但它不在 .app 包内，无法触发 macOS 授权弹窗。\n"
         "      扫描列表会被遮蔽，BLE 视图会是空的。",
     "Permissions required:": "需要以下权限：",
+    "Permissions needed": "需要授权",
+    "  A helper window is opening — click Allow on each prompt "
+    "(granted once, kept):":
+        "  正在打开一个辅助窗口 —— 在每个弹框点「允许」（授权一次即长期保留）：",
+    "  Ctrl+C skips — the affected views stay limited until granted.":
+        "  按 Ctrl+C 可跳过 —— 相关视图在授权前会保持受限。",
+    "Location: {m}": "定位：{m}",
+    "Bluetooth: {m}": "蓝牙：{m}",
+    "  ✓ All set — starting diting.": "  ✓ 已就绪 —— 正在启动 diting。",
+    "  Not all permissions were granted after {n}s — starting with\n"
+    "  limited views. Grant them and rerun diting to unlock the rest.":
+        "  {n} 秒内未全部授权 —— 将以受限视图启动。授权后重新运行\n"
+        "  diting 即可解锁其余视图。",
+    "  Skipped — starting with the permissions already in place.":
+        "  已跳过 —— 以当前已有的权限启动。",
     "Location Services (Wi-Fi scan list)": "定位服务（Wi-Fi 扫描列表）",
     "Bluetooth (BLE devices view)": "蓝牙（BLE 设备视图）",
     "Click Allow on each macOS prompt that appears.":

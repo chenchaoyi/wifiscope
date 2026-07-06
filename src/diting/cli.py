@@ -2405,13 +2405,17 @@ def _ensure_helper_ready() -> str | None:
         missing.append(t("Location Services (Wi-Fi scan list)"))
     if not bluetooth_ok:
         missing.append(t("Bluetooth (BLE devices view)"))
-    print(t("Permissions required:"))
-    for item in missing:
-        print(f"  - {item}")
+    need_loc = not location_ok
+    need_bt = not bluetooth_ok
     print()
-    print(t("Launching helper {bundle}", bundle=bundle))
-    print(t("Click Allow on each macOS prompt that appears."))
-    print(t("(Ctrl+C to skip and start the TUI with degraded views.)"))
+    print(t("Permissions needed"))
+    print(t("  A helper window is opening — click Allow on each prompt "
+            "(granted once, kept):"))
+    print()
+    for item in missing:
+        print(f"    •  {item}")
+    print()
+    print(t("  Ctrl+C skips — the affected views stay limited until granted."))
     print()
     try:
         # `open --env KEY=VALUE` bridges our process env into the
@@ -2456,36 +2460,33 @@ def _ensure_helper_ready() -> str | None:
             waited += interval
             location_ok = _helper.has_permission(binary)
             bluetooth_ok = _helper.has_bluetooth_permission(binary)
-            # Print a status line whenever something flips, so the user
-            # gets feedback as each Allow lands rather than staring at
-            # silent dots until the second grant arrives.
+            # Update a clean per-permission line as each Allow lands — no
+            # accumulating dots, only the permissions we're actually waiting on.
             current = (location_ok, bluetooth_ok)
             if current != last_status:
                 last_status = current
-                print()
-                print(t(
-                    "  Location: {loc}    Bluetooth: {bt}",
-                    loc=t("granted") if location_ok else t("waiting"),
-                    bt=t("granted") if bluetooth_ok else t("waiting"),
-                ))
+                parts = []
+                if need_loc:
+                    parts.append(t("Location: {m}",
+                                   m=t("granted") if location_ok else t("waiting")))
+                if need_bt:
+                    parts.append(t("Bluetooth: {m}",
+                                   m=t("granted") if bluetooth_ok else t("waiting")))
+                print("  " + "    ".join(parts))
             if location_ok and bluetooth_ok:
-                print(t("All permissions granted — starting TUI."))
+                print(t("  ✓ All set — starting diting."))
                 # Brief pause lets the helper window show its
                 # confirmation message before auto-quitting.
                 time.sleep(0.5)
                 return binary
-            sys.stdout.write(".")
-            sys.stdout.flush()
-        print()
         print(t(
-            "(no full grant after {n}s; starting TUI anyway with whatever\n"
-            " permissions did land. Rerun diting after granting to\n"
-            " unlock the remaining views.)",
+            "  Not all permissions were granted after {n}s — starting with\n"
+            "  limited views. Grant them and rerun diting to unlock the rest.",
             n=int(timeout),
         ))
     except KeyboardInterrupt:
         print()
-        print(t("Skipped; starting TUI with whatever permissions are in place."))
+        print(t("  Skipped — starting with the permissions already in place."))
     return binary
 
 
